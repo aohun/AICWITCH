@@ -1,0 +1,12 @@
+[package]
+name = "ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+domain.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+session.workspace = true
+store.workspace = true
