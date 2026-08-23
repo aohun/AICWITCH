@@ -10,7 +10,7 @@ use domain::{
     extract_codex_provider_name, new_provider_id, parse_codex_form, AppKind, CodexForm, CodexKind,
     CodexSettings, DomainError, Provider, ProviderSettings, OFFICIAL_CODEX_ID,
 };
-use store::{AppSettings, Store, StoreError, ThemePreference};
+use store::{AppLanguage, AppSettings, Store, StoreError, ThemePreference};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -78,6 +78,40 @@ impl Workspace {
     pub fn set_theme(&self, theme: ThemePreference) -> Result<(), SessionError> {
         let mut settings = self.store.settings()?;
         settings.theme = theme;
+        self.store.save_settings(&settings)?;
+        Ok(())
+    }
+
+    pub fn set_language(&self, language: AppLanguage) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.language = language;
+        self.store.save_settings(&settings)?;
+        Ok(())
+    }
+
+    pub fn toggle_main_app(&self, app_id: &str) -> Result<bool, SessionError> {
+        let mut settings = self.store.settings()?;
+        let is_enabled = if settings.main_apps.iter().any(|a| a == app_id) {
+            settings.main_apps.retain(|a| a != app_id);
+            false
+        } else {
+            settings.main_apps.push(app_id.to_string());
+            true
+        };
+        self.store.save_settings(&settings)?;
+        Ok(is_enabled)
+    }
+
+    pub fn set_launch_on_startup(&self, enabled: bool) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.launch_on_startup = enabled;
+        self.store.save_settings(&settings)?;
+        Ok(())
+    }
+
+    pub fn set_minimize_to_tray(&self, enabled: bool) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.minimize_to_tray = enabled;
         self.store.save_settings(&settings)?;
         Ok(())
     }

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use domain::{
     extract_codex_api_key, extract_codex_base_url, extract_codex_model, has_login_material,
     CodexForm, CodexKind, CodexModelMapping, CodexPreset, Provider, RESPONSES_PRESETS,
@@ -10,7 +8,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Window, WindowControlArea,
 };
 use gpui_component::{
-    alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
@@ -21,7 +18,7 @@ use gpui_component::{
     v_flex, ActiveTheme, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt,
 };
 use session::Workspace;
-use store::ThemePreference;
+use store::{AppLanguage, ThemePreference};
 
 use crate::assets::CustomIcon;
 use crate::theme::{self, StatusColors};
@@ -322,15 +319,32 @@ pub enum Route {
     Settings,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsTab {
+    #[default]
+    General,
+    Appearance,
+    Providers,
+    Skills,
+    Usage,
+    Daemon,
+}
+
 pub struct RouterApp {
     workspace: Workspace,
     providers: Vec<Provider>,
     current_id: Option<String>,
     route: Route,
+    previous_route: Route,
     sidebar_open: bool,
     theme: ThemePreference,
+    language: AppLanguage,
+    main_apps: Vec<String>,
+    launch_on_startup: bool,
+    minimize_to_tray: bool,
+    settings_tab: SettingsTab,
     search_input: Entity<InputState>,
-    home_input: Entity<InputState>,
+    settings_search_input: Entity<InputState>,
     last_error: Option<SharedString>,
     form: Option<FormDraft>,
     logs: Vec<String>,
@@ -359,14 +373,12 @@ impl RouterApp {
         let settings = workspace.settings().unwrap_or_default();
         crate::theme::apply_theme(settings.theme, Some(window), cx);
 
-        let home_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("~/.codex")
-                .default_value(workspace.codex_home().display().to_string())
-        });
-
         let search_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder("搜索供应商、模型或端点...")
+        });
+
+        let settings_search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("搜索设置...")
         });
 
         let mut app = Self {
@@ -374,10 +386,16 @@ impl RouterApp {
             providers: Vec::new(),
             current_id: None,
             route: Route::Dashboard,
+            previous_route: Route::Dashboard,
             sidebar_open: true,
             theme: settings.theme,
+            language: settings.language,
+            main_apps: settings.main_apps,
+            launch_on_startup: settings.launch_on_startup,
+            minimize_to_tray: settings.minimize_to_tray,
+            settings_tab: SettingsTab::General,
             search_input,
-            home_input,
+            settings_search_input,
             last_error: None,
             form: None,
             logs: vec!["应用已启动并加载工作区".into()],
@@ -399,48 +417,75 @@ impl RouterApp {
 
     fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
         if self.route != route {
+            self.previous_route = self.route;
             self.form = None;
         }
         self.route = route;
         cx.notify();
     }
 
-    fn apply_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let raw = self.home_input.read(cx).value().to_string();
-        let home = {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(trimmed))
-            }
-        };
-        match self.workspace.apply_codex_home(home) {
-            Ok(()) => {
-                let path = self.workspace.codex_home().display().to_string();
-                self.home_input
-                    .update(cx, |input, cx| input.set_value(path, window, cx));
-                self.reload();
-                self.logs.push("已更新 Codex 工作区路径".into());
-                notify_success("已更新 Codex 工作区目录", window, cx);
-            }
-            Err(error) => self.fail(error, window, cx),
+    fn set_language(&mut self, language: AppLanguage, window: &mut Window, cx: &mut Context<Self>) {
+        self.language = language;
+        if let Err(err) = self.workspace.set_language(language) {
+            self.fail(err, window, cx);
+            return;
         }
+        let msg = match language {
+            AppLanguage::ZhCn => "已切换界面语言为简体中文",
+            AppLanguage::En => "Interface language set to English",
+        };
+        self.logs.push(msg.into());
+        notify_success(msg, window, cx);
         cx.notify();
     }
 
-    fn reset_home(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.workspace.apply_codex_home(None) {
-            Ok(()) => {
-                let path = self.workspace.codex_home().display().to_string();
-                self.home_input
-                    .update(cx, |input, cx| input.set_value(path, window, cx));
-                self.reload();
-                self.logs.push("已重置 Codex 工作区路径为默认".into());
-                notify_success("已重置 Codex 目录为系统默认路径", window, cx);
+    fn toggle_main_app(&mut self, app_id: &str, _window: &mut Window, cx: &mut Context<Self>) {
+        match self.workspace.toggle_main_app(app_id) {
+            Ok(is_enabled) => {
+                if is_enabled {
+                    if !self.main_apps.iter().any(|a| a == app_id) {
+                        self.main_apps.push(app_id.to_string());
+                    }
+                } else {
+                    self.main_apps.retain(|a| a != app_id);
+                }
+                cx.notify();
             }
-            Err(error) => self.fail(error, window, cx),
+            Err(err) => self.fail(err, _window, cx),
         }
+    }
+
+    fn toggle_launch_on_startup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let new_val = !self.launch_on_startup;
+        self.launch_on_startup = new_val;
+        if let Err(err) = self.workspace.set_launch_on_startup(new_val) {
+            self.fail(err, window, cx);
+            return;
+        }
+        let msg = if new_val {
+            "已开启开机自启"
+        } else {
+            "已关闭开机自启"
+        };
+        self.logs.push(msg.into());
+        notify_success(msg, window, cx);
+        cx.notify();
+    }
+
+    fn toggle_minimize_to_tray(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let new_val = !self.minimize_to_tray;
+        self.minimize_to_tray = new_val;
+        if let Err(err) = self.workspace.set_minimize_to_tray(new_val) {
+            self.fail(err, window, cx);
+            return;
+        }
+        let msg = if new_val {
+            "已开启关闭时最小化到托盘"
+        } else {
+            "已关闭最小化到托盘"
+        };
+        self.logs.push(msg.into());
+        notify_success(msg, window, cx);
         cx.notify();
     }
 
@@ -831,6 +876,7 @@ impl RouterApp {
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.providers.len();
         let border = cx.theme().sidebar_border;
+        let is_en = self.language == AppLanguage::En;
 
         v_flex()
             .w(px(210.))
@@ -844,48 +890,126 @@ impl RouterApp {
                 "nav-dashboard",
                 IconName::LayoutDashboard,
                 Some(rgb(0x3B82F6).into()), // Blue
-                "仪表盘",
+                if is_en { "Dashboard" } else { "仪表盘" },
                 Route::Dashboard,
                 None,
                 false,
                 cx,
             ))
-            .child(self.nav_item(
-                "nav-codex",
-                CustomIcon::OpenAI,
-                Some(rgb(0x10A37F).into()), // OpenAI Emerald Green
-                "Codex",
-                Route::Codex,
-                Some(format!("{count}")),
-                false,
-                cx,
-            ))
-            .child(self.nav_item(
-                "nav-claude",
-                CustomIcon::Claude,
-                Some(rgb(0xD97757).into()), // Claude Terracotta Orange
-                "Claude Code",
-                Route::Claude,
-                Some("即将支持".into()),
-                true,
-                cx,
-            ))
-            .child(self.nav_item(
-                "nav-grok",
-                CustomIcon::Grok,
-                Some(rgb(0x8B5CF6).into()), // xAI Violet
-                "Grok Build",
-                Route::Grok,
-                Some("即将支持".into()),
-                true,
-                cx,
-            ))
+            .when(self.main_apps.iter().any(|a| a == "codex"), |this| {
+                this.child(self.nav_item(
+                    "nav-codex",
+                    CustomIcon::OpenAI,
+                    Some(rgb(0x10A37F).into()), // OpenAI Emerald Green
+                    "Codex",
+                    Route::Codex,
+                    Some(format!("{count}")),
+                    false,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "claude"), |this| {
+                this.child(self.nav_item(
+                    "nav-claude",
+                    CustomIcon::Claude,
+                    Some(rgb(0xD97757).into()), // Claude Terracotta Orange
+                    "Claude Code",
+                    Route::Claude,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "claude-desktop"), |this| {
+                this.child(self.nav_item(
+                    "nav-claude-desktop",
+                    CustomIcon::Claude,
+                    Some(rgb(0xD97757).into()),
+                    "Claude Desktop",
+                    Route::Claude,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "gemini"), |this| {
+                this.child(self.nav_item(
+                    "nav-gemini",
+                    IconName::Star,
+                    Some(rgb(0x2563EB).into()),
+                    "Gemini",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "grok"), |this| {
+                this.child(self.nav_item(
+                    "nav-grok",
+                    CustomIcon::Grok,
+                    Some(rgb(0x8B5CF6).into()), // xAI Violet
+                    "Grok Build",
+                    Route::Grok,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "opencode"), |this| {
+                this.child(self.nav_item(
+                    "nav-opencode",
+                    IconName::SquareTerminal,
+                    Some(rgb(0x0284C7).into()),
+                    "OpenCode",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "openclaw"), |this| {
+                this.child(self.nav_item(
+                    "nav-openclaw",
+                    IconName::Bot,
+                    Some(rgb(0xDC2626).into()),
+                    "OpenClaw",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "hermes"), |this| {
+                this.child(self.nav_item(
+                    "nav-hermes",
+                    IconName::SquareTerminal,
+                    Some(rgb(0x4B5563).into()),
+                    "Hermes",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "pi"), |this| {
+                this.child(self.nav_item(
+                    "nav-pi",
+                    IconName::Star,
+                    Some(rgb(0x3B82F6).into()),
+                    "Pi",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
             .child(div().flex_1())
             .child(self.nav_item(
                 "nav-notifications",
                 IconName::Bell,
                 Some(rgb(0xF59E0B).into()), // Amber
-                "系统通知",
+                if is_en { "Notifications" } else { "系统通知" },
                 Route::Notifications,
                 if self.logs.len() > 1 {
                     Some(format!("{}", self.logs.len()))
@@ -906,7 +1030,7 @@ impl RouterApp {
                 "nav-settings",
                 IconName::Settings,
                 Some(rgb(0x64748B).into()), // Slate
-                "偏好设置",
+                if is_en { "Settings" } else { "偏好设置" },
                 Route::Settings,
                 None,
                 false,
@@ -1506,87 +1630,258 @@ impl RouterApp {
             )
     }
 
-    fn render_settings_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let home = self.workspace.codex_home();
-        let has_auth = home.join("auth.json").exists();
-        let has_config = home.join("config.toml").exists();
+    fn render_switch(&self, checked: bool, cx: &Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let bg_color = if checked {
+            theme.primary
+        } else {
+            theme.border
+        };
+
+        div()
+            .w(px(38.))
+            .h(px(22.))
+            .rounded(px(11.))
+            .bg(bg_color)
+            .p(px(2.))
+            .flex()
+            .items_center()
+            .child(
+                div()
+                    .size(px(18.))
+                    .rounded(px(9.))
+                    .bg(rgb(0xFFFFFF))
+                    .shadow_xs()
+                    .when(checked, |this| this.ml(px(16.)))
+                    .when(!checked, |this| this.ml(px(0.))),
+            )
+    }
+
+    fn render_settings_sidebar_item(
+        &self,
+        tab: SettingsTab,
+        icon: impl Into<Icon>,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let active = self.settings_tab == tab;
+        let accent = cx.theme().sidebar_accent;
+        let fg = cx.theme().sidebar_foreground;
+
+        div()
+            .id(SharedString::from(format!("settings-tab-{:?}", tab)))
+            .h(px(36.))
+            .w_full()
+            .px(px(10.))
+            .rounded(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .text_size(px(13.))
+            .text_color(fg)
+            .cursor_pointer()
+            .when(active, |this| this.bg(accent).font_weight(FontWeight::SEMIBOLD))
+            .when(!active, |this| this.hover(|this| this.bg(accent.opacity(0.5))))
+            .child(
+                Icon::new(icon)
+                    .size(px(16.))
+                    .flex_shrink_0()
+                    .text_color(if active { cx.theme().foreground } else { fg.opacity(0.7) }),
+            )
+            .child(div().flex_1().truncate().child(label))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.settings_tab = tab;
+                cx.notify();
+            }))
+    }
+
+    fn render_app_toggle_chip(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        icon: impl Into<Icon>,
+        icon_color: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_active = self.main_apps.iter().any(|a| a == id);
+        let theme = cx.theme();
+
+        div()
+            .id(SharedString::from(format!("app-chip-{}", id)))
+            .h(px(32.))
+            .px(px(10.))
+            .rounded(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .cursor_pointer()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .when(is_active, |this| {
+                this.bg(theme.primary)
+                    .text_color(theme.primary_foreground)
+                    .shadow_xs()
+            })
+            .when(!is_active, |this| {
+                this.bg(theme.secondary.opacity(0.5))
+                    .text_color(theme.muted_foreground)
+                    .border_1()
+                    .border_color(theme.border)
+                    .hover(|this| this.bg(theme.secondary))
+            })
+            .child(
+                Icon::new(icon)
+                    .size(px(14.))
+                    .text_color(if is_active { theme.primary_foreground } else { icon_color }),
+            )
+            .child(label)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_main_app(id, window, cx);
+            }))
+    }
+
+    fn render_placeholder_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_en = self.language == AppLanguage::En;
+        let title = match self.settings_tab {
+            SettingsTab::General => if is_en { "General" } else { "通用" },
+            SettingsTab::Appearance => if is_en { "Appearance" } else { "外观" },
+            SettingsTab::Providers => if is_en { "Providers" } else { "服务商" },
+            SettingsTab::Skills => if is_en { "Skills" } else { "技能" },
+            SettingsTab::Usage => if is_en { "Usage" } else { "用量" },
+            SettingsTab::Daemon => if is_en { "Daemon" } else { "守护进程" },
+        };
 
         v_flex()
             .w_full()
             .gap(px(16.))
             .child(
                 div()
-                    .text_size(px(28.))
+                    .text_size(px(24.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(cx.theme().foreground)
-                    .child("Settings"),
+                    .child(title),
             )
             .child(
-                // Workspace Path Card
                 theme::tile(cx).child(
                     v_flex()
                         .w_full()
-                        .gap(px(10.))
-                        .child(theme::tile_label("CODEX WORKSPACE / 工作区路径", cx))
+                        .items_center()
+                        .justify_center()
+                        .py(px(40.))
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_size(px(14.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().foreground)
+                                .child(format!("{} 配置模块", title)),
+                        )
                         .child(
                             div()
                                 .text_size(px(12.))
                                 .text_color(cx.theme().muted_foreground)
-                                .child("启用供应商时，将原子写入此目录下的 auth.json 与 config.toml。"),
+                                .child(if is_en {
+                                    "This module will be supported in upcoming releases."
+                                } else {
+                                    "此模块将在后续迭代中持续完善与扩展。"
+                                }),
+                        ),
+                ),
+            )
+    }
+
+    fn render_general_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_en = self.language == AppLanguage::En;
+        let theme = cx.theme().clone();
+
+        v_flex()
+            .w_full()
+            .gap(px(16.))
+            .child(
+                div()
+                    .text_size(px(24.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(theme.foreground)
+                    .child(if is_en { "General" } else { "通用" }),
+            )
+            // 1. 界面语言
+            .child(
+                theme::tile(cx).child(
+                    v_flex()
+                        .w_full()
+                        .gap(px(10.))
+                        .child(
+                            v_flex()
+                                .gap(px(2.))
+                                .child(theme::tile_label(if is_en { "INTERFACE LANGUAGE / 界面语言" } else { "界面语言" }, cx))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.muted_foreground)
+                                        .child(if is_en {
+                                            "Switch and preview interface language immediately."
+                                        } else {
+                                            "切换后立即预览界面语言，保存后永久生效。"
+                                        }),
+                                ),
                         )
                         .child(
                             h_flex()
-                                .w_full()
                                 .gap(px(8.))
-                                .items_center()
-                                .child(div().flex_1().child(Input::new(&self.home_input).cleanable(true)))
                                 .child(
-                                    Button::new("set-apply-home")
-                                        .primary()
+                                    Button::new("lang-zh")
+                                        .outline()
                                         .small()
-                                        .label("应用路径")
+                                        .selected(self.language == AppLanguage::ZhCn)
+                                        .label("简体中文")
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.apply_home(window, cx);
+                                            this.set_language(AppLanguage::ZhCn, window, cx);
                                         })),
                                 )
                                 .child(
-                                    Button::new("set-reset-home")
+                                    Button::new("lang-en")
                                         .outline()
                                         .small()
-                                        .label("恢复默认")
+                                        .selected(self.language == AppLanguage::En)
+                                        .label("English")
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.reset_home(window, cx);
+                                            this.set_language(AppLanguage::En, window, cx);
                                         })),
                                 ),
                         ),
                 ),
             )
+            // 2. 外观主题
             .child(
-                // Appearance Card
                 theme::tile(cx).child(
                     v_flex()
                         .w_full()
                         .gap(px(10.))
-                        .child(theme::tile_label("APPEARANCE / 外观主题", cx))
+                        .child(
+                            v_flex()
+                                .gap(px(2.))
+                                .child(theme::tile_label(if is_en { "APPEARANCE THEME / 外观主题" } else { "外观主题" }, cx))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.muted_foreground)
+                                        .child(if is_en {
+                                            "Select application appearance theme, takes effect immediately."
+                                        } else {
+                                            "选择应用的外观主题，立即生效。"
+                                        }),
+                                ),
+                        )
                         .child(
                             h_flex()
                                 .gap(px(8.))
                                 .child(
-                                    Button::new("theme-sys")
-                                        .outline()
-                                        .small()
-                                        .selected(self.theme == ThemePreference::System)
-                                        .label("跟随系统")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.set_theme_preference(ThemePreference::System, window, cx);
-                                        })),
-                                )
-                                .child(
                                     Button::new("theme-lt")
                                         .outline()
                                         .small()
+                                        .icon(IconName::Sun)
                                         .selected(self.theme == ThemePreference::Light)
-                                        .label("浅色主题")
+                                        .label(if is_en { "Light" } else { "浅色" })
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.set_theme_preference(ThemePreference::Light, window, cx);
                                         })),
@@ -1595,85 +1890,278 @@ impl RouterApp {
                                     Button::new("theme-dk")
                                         .outline()
                                         .small()
+                                        .icon(IconName::Moon)
                                         .selected(self.theme == ThemePreference::Dark)
-                                        .label("深色主题")
+                                        .label(if is_en { "Dark" } else { "深色" })
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.set_theme_preference(ThemePreference::Dark, window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("theme-sys")
+                                        .outline()
+                                        .small()
+                                        .icon(IconName::Palette)
+                                        .selected(self.theme == ThemePreference::System)
+                                        .label(if is_en { "Follow System" } else { "跟随系统" })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.set_theme_preference(ThemePreference::System, window, cx);
                                         })),
                                 ),
                         ),
                 ),
             )
+            // 3. 主页面显示
             .child(
-                // Diagnostics Card
                 theme::tile(cx).child(
                     v_flex()
                         .w_full()
                         .gap(px(10.))
-                        .child(theme::tile_label("DIAGNOSTICS / 运行与文件状态", cx))
                         .child(
-                            h_flex()
-                                .gap(px(12.))
+                            v_flex()
+                                .gap(px(2.))
+                                .child(theme::tile_label(if is_en { "MAIN PAGE APPS / 主页面显示" } else { "主页面显示" }, cx))
                                 .child(
-                                    h_flex()
-                                        .items_center()
-                                        .gap(px(6.))
-                                        .child(
-                                            div()
-                                                .text_size(px(13.))
-                                                .child("auth.json:"),
-                                        )
-                                        .child(if has_auth {
-                                            Tag::success().small().child("存在")
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(theme.muted_foreground)
+                                        .child(if is_en {
+                                            "Select applications to show on the main navigation sidebar."
                                         } else {
-                                            Tag::danger().small().child("缺失")
-                                        }),
-                                )
-                                .child(
-                                    h_flex()
-                                        .items_center()
-                                        .gap(px(6.))
-                                        .child(
-                                            div()
-                                                .text_size(px(13.))
-                                                .child("config.toml:"),
-                                        )
-                                        .child(if has_config {
-                                            Tag::success().small().child("存在")
-                                        } else {
-                                            Tag::danger().small().child("缺失")
+                                            "选择在主页面侧边栏显示的应用。"
                                         }),
                                 ),
                         )
                         .child(
-                            Alert::info(
-                                "settings-help",
-                                "切换配置后，请完全重启终端或正在运行的 Codex 进程以便生效。",
-                            ),
+                            h_flex()
+                                .w_full()
+                                .flex_wrap()
+                                .gap(px(8.))
+                                .child(self.render_app_toggle_chip("claude", "Claude Code", CustomIcon::Claude, rgb(0xD97757).into(), cx))
+                                .child(self.render_app_toggle_chip("claude-desktop", "Claude Desktop", CustomIcon::Claude, rgb(0xD97757).into(), cx))
+                                .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
+                                .child(self.render_app_toggle_chip("gemini", "Gemini", IconName::Star, rgb(0x2563EB).into(), cx))
+                                .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx))
+                                .child(self.render_app_toggle_chip("opencode", "OpenCode", IconName::SquareTerminal, rgb(0x0284C7).into(), cx))
+                                .child(self.render_app_toggle_chip("openclaw", "OpenClaw", IconName::Bot, rgb(0xDC2626).into(), cx))
+                                .child(self.render_app_toggle_chip("hermes", "Hermes", IconName::SquareTerminal, rgb(0x4B5563).into(), cx))
+                                .child(self.render_app_toggle_chip("pi", "Pi", IconName::Star, rgb(0x3B82F6).into(), cx)),
                         ),
                 ),
             )
+            // 4. 窗口行为
             .child(
-                // About Card
                 theme::tile(cx).child(
                     v_flex()
                         .w_full()
-                        .gap(px(6.))
-                        .child(theme::tile_label("ABOUT / 关于", cx))
+                        .gap(px(14.))
                         .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(cx.theme().foreground)
-                                .child("Router Switch v0.1.0"),
+                            h_flex()
+                                .items_center()
+                                .gap(px(6.))
+                                .child(Icon::new(IconName::LayoutDashboard).size(px(15.)))
+                                .child(theme::tile_label(if is_en { "WINDOW BEHAVIOR / 窗口行为" } else { "窗口行为" }, cx)),
                         )
                         .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child("基于 GPUI 构建的现代化 AI 编程配置中枢，完美对齐 Motrix 桌面体验。"),
+                            // 开机自启
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .justify_between()
+                                .p(px(8.))
+                                .rounded(px(8.))
+                                .bg(theme.secondary.opacity(0.4))
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap(px(10.))
+                                        .child(
+                                            div()
+                                                .size(px(32.))
+                                                .rounded(px(8.))
+                                                .bg(theme.border)
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(Icon::new(IconName::Settings2).size(px(16.))),
+                                        )
+                                        .child(
+                                            v_flex()
+                                                .gap(px(2.))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(13.))
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(theme.foreground)
+                                                        .child(if is_en { "Launch on Startup" } else { "开机自启" }),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .text_color(theme.muted_foreground)
+                                                        .child(if is_en {
+                                                            "Run Router Switch automatically on system startup"
+                                                        } else {
+                                                            "随系统启动自动运行 Router Switch"
+                                                        }),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("switch-launch-on-startup")
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_launch_on_startup(window, cx);
+                                        }))
+                                        .child(self.render_switch(self.launch_on_startup, cx)),
+                                ),
+                        )
+                        .child(
+                            // 关闭时最小化到托盘
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .justify_between()
+                                .p(px(8.))
+                                .rounded(px(8.))
+                                .bg(theme.secondary.opacity(0.4))
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap(px(10.))
+                                        .child(
+                                            div()
+                                                .size(px(32.))
+                                                .rounded(px(8.))
+                                                .bg(theme.border)
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .child(Icon::new(IconName::WindowMinimize).size(px(16.))),
+                                        )
+                                        .child(
+                                            v_flex()
+                                                .gap(px(2.))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(13.))
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(theme.foreground)
+                                                        .child(if is_en { "Minimize to Tray on Close" } else { "关闭时最小化到托盘" }),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .text_color(theme.muted_foreground)
+                                                        .child(if is_en {
+                                                            "Hides to system tray when clicking close button instead of quitting."
+                                                        } else {
+                                                            "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。"
+                                                        }),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("switch-minimize-to-tray")
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_minimize_to_tray(window, cx);
+                                        }))
+                                        .child(self.render_switch(self.minimize_to_tray, cx)),
+                                ),
                         ),
                 ),
+            )
+    }
+
+    fn render_settings_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_en = self.language == AppLanguage::En;
+        let border = cx.theme().sidebar_border;
+
+        h_flex()
+            .size_full()
+            .gap(px(16.))
+            .child(
+                // Left sub-sidebar for settings (Image 2 style)
+                v_flex()
+                    .w(px(190.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .gap(px(10.))
+                    .pr(px(12.))
+                    .border_r_1()
+                    .border_color(border)
+                    .child(
+                        // Back button
+                        Button::new("settings-back-btn")
+                            .ghost()
+                            .small()
+                            .icon(IconName::ChevronLeft)
+                            .label(if is_en { "Back" } else { "返回" })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.route = this.previous_route;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Input::new(&self.settings_search_input)
+                            .small()
+                            .cleanable(true),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(3.))
+                            .child(self.render_settings_sidebar_item(
+                                SettingsTab::General,
+                                IconName::Settings,
+                                if is_en { "General" } else { "通用" },
+                                cx,
+                            ))
+                            .child(self.render_settings_sidebar_item(
+                                SettingsTab::Appearance,
+                                IconName::Sun,
+                                if is_en { "Appearance" } else { "外观" },
+                                cx,
+                            ))
+                            .child(self.render_settings_sidebar_item(
+                                SettingsTab::Providers,
+                                IconName::SquareTerminal,
+                                if is_en { "Providers" } else { "服务商" },
+                                cx,
+                            ))
+                            .child(self.render_settings_sidebar_item(
+                                SettingsTab::Skills,
+                                IconName::Building2,
+                                if is_en { "Skills" } else { "技能" },
+                                cx,
+                            ))
+                            .child(self.render_settings_sidebar_item(
+                                SettingsTab::Usage,
+                                IconName::ChartPie,
+                                if is_en { "Usage" } else { "用量" },
+                                cx,
+                            ))
+                            .child(self.render_settings_sidebar_item(
+                                SettingsTab::Daemon,
+                                IconName::Inspector,
+                                if is_en { "Daemon" } else { "守护进程" },
+                                cx,
+                            )),
+                    ),
+            )
+            .child(
+                // Right pane content
+                div()
+                    .flex_1()
+                    .h_full()
+                    .min_w_0()
+                    .child(match self.settings_tab {
+                        SettingsTab::General => self.render_general_settings(cx).into_any_element(),
+                        _ => self.render_placeholder_settings(cx).into_any_element(),
+                    }),
             )
     }
 

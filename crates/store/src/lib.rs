@@ -19,10 +19,38 @@ pub enum StoreError {
     Conflict(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppLanguage {
+    #[default]
+    ZhCn,
+    En,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub codex_home: Option<PathBuf>,
     pub theme: ThemePreference,
+    #[serde(default)]
+    pub language: AppLanguage,
+    #[serde(default = "default_main_apps")]
+    pub main_apps: Vec<String>,
+    #[serde(default)]
+    pub launch_on_startup: bool,
+    #[serde(default = "default_minimize_to_tray")]
+    pub minimize_to_tray: bool,
+}
+
+fn default_main_apps() -> Vec<String> {
+    vec![
+        "codex".into(),
+        "claude".into(),
+        "grok".into(),
+    ]
+}
+
+fn default_minimize_to_tray() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +66,10 @@ impl Default for AppSettings {
         Self {
             codex_home: None,
             theme: ThemePreference::System,
+            language: AppLanguage::ZhCn,
+            main_apps: default_main_apps(),
+            launch_on_startup: false,
+            minimize_to_tray: true,
         }
     }
 }
