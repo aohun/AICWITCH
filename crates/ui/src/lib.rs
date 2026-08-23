@@ -11,6 +11,8 @@ use gpui_component::Root;
 use crate::app_view::RouterApp;
 use crate::assets::AppAssets;
 
+rust_i18n::i18n!("locales", fallback = "zh-CN");
+
 pub fn run() {
     Application::new()
         .with_assets(AppAssets)
@@ -34,10 +36,10 @@ pub fn run() {
                 ..Default::default()
             };
 
-        cx.open_window(options, |window, cx| {
-            let app = cx.new(|cx| RouterApp::new(window, cx));
-            cx.new(|cx| Root::new(app, window, cx))
-        })
-        .expect("failed to open window");
-    });
+            cx.open_window(options, |window, cx| {
+                let app = cx.new(|cx| RouterApp::new(window, cx));
+                cx.new(|cx| Root::new(app, window, cx))
+            })
+            .expect("failed to open window");
+        });
 }

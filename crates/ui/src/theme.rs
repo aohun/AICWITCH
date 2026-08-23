@@ -177,11 +177,12 @@ pub fn tile(cx: &App) -> Div {
 }
 
 /// Motrix tile uppercase label.
-pub fn tile_label(text: &'static str, cx: &App) -> impl IntoElement {
+pub fn tile_label(text: impl Into<gpui::SharedString>, cx: &App) -> impl IntoElement {
     let muted = Theme::global(cx).muted_foreground;
+    let s = text.into();
     gpui::div()
         .text_size(px(11.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(muted)
-        .child(text.to_uppercase())
+        .child(s.to_string().to_uppercase())
 }

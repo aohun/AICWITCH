@@ -29,6 +29,7 @@ use gpui_component::{
     v_flex, ActiveTheme, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt,
 };
 use session::Workspace;
+use rust_i18n::t;
 use store::{AppLanguage, ThemePreference};
 
 use crate::assets::CustomIcon;
@@ -621,6 +622,7 @@ impl RouterApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace = Workspace::open_default().expect("open workspace");
         let settings = workspace.settings().unwrap_or_default();
+        rust_i18n::set_locale(settings.language.locale_str());
         crate::theme::apply_theme(settings.theme, Some(window), cx);
 
         let search_input = cx.new(|cx| {
@@ -634,19 +636,19 @@ impl RouterApp {
         let window_items = vec![
             UsageWindowSelectItem {
                 choice: UsageWindowChoice::Days7,
-                label: if settings.language == AppLanguage::En { "Last 7 Days".into() } else { "过去 7 天".into() },
+                label: t!("usage.days_7").to_string(),
             },
             UsageWindowSelectItem {
                 choice: UsageWindowChoice::Days30,
-                label: if settings.language == AppLanguage::En { "Last 30 Days".into() } else { "过去 30 天".into() },
+                label: t!("usage.days_30").to_string(),
             },
             UsageWindowSelectItem {
                 choice: UsageWindowChoice::Days90,
-                label: if settings.language == AppLanguage::En { "Last 90 Days".into() } else { "过去 90 天".into() },
+                label: t!("usage.days_90").to_string(),
             },
             UsageWindowSelectItem {
                 choice: UsageWindowChoice::Year1,
-                label: if settings.language == AppLanguage::En { "Last 1 Year".into() } else { "过去 1 年".into() },
+                label: t!("usage.year_1").to_string(),
             },
         ];
         let usage_window_select = cx.new(|cx| {
@@ -1302,7 +1304,7 @@ impl RouterApp {
         id: &'static str,
         icon: impl Into<Icon>,
         icon_color: Option<Hsla>,
-        label: &'static str,
+        label: impl Into<SharedString>,
         route: Route,
         badge: Option<String>,
         disabled: bool,
@@ -1311,6 +1313,7 @@ impl RouterApp {
         let active = self.route == route;
         let accent = cx.theme().sidebar_accent;
         let fg = cx.theme().sidebar_foreground;
+        let label_str = label.into();
 
         div()
             .id(SharedString::from(id))
@@ -1332,7 +1335,7 @@ impl RouterApp {
                     .flex_shrink_0()
                     .text_color(icon_color.unwrap_or(if active { cx.theme().foreground } else { fg.opacity(0.85) })),
             )
-            .child(div().flex_1().truncate().child(label))
+            .child(div().flex_1().truncate().child(label_str))
             .when_some(badge, |this, b| {
                 this.child(
                     div()
@@ -1417,8 +1420,6 @@ impl RouterApp {
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().sidebar_border;
-        let is_en = self.language == AppLanguage::En;
-
         let codex_count = self.providers_for(AppKind::Codex).len();
         let claude_count = self.providers_for(AppKind::Claude).len();
         let grok_count = self.providers_for(AppKind::Grok).len();
@@ -1434,7 +1435,7 @@ impl RouterApp {
                     Some(rgb(0xEA580C).into()),
                     "Amp",
                     Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1454,7 +1455,7 @@ impl RouterApp {
                     Some(rgb(0xD97757).into()),
                     "Claude Desktop",
                     Route::Claude,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1474,7 +1475,7 @@ impl RouterApp {
                     Some(rgb(0x6366F1).into()),
                     "Cursor CLI",
                     Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1484,7 +1485,7 @@ impl RouterApp {
                     Some(rgb(0x3B82F6).into()),
                     "DeepSeek Harness",
                     Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1494,7 +1495,7 @@ impl RouterApp {
                     Some(rgb(0x4B5563).into()),
                     "Fx",
                     Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1524,7 +1525,7 @@ impl RouterApp {
                     Some(rgb(0x2563EB).into()),
                     "Kimi Code",
                     Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1534,7 +1535,7 @@ impl RouterApp {
                     Some(rgb(0xEC4899).into()),
                     "Oh My Pi",
                     Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    Some(t!("nav.soon").to_string()),
                     true,
                     cx,
                 )),
@@ -1567,7 +1568,7 @@ impl RouterApp {
                 "nav-dashboard",
                 IconName::LayoutDashboard,
                 Some(rgb(0x3B82F6).into()), // Blue
-                if is_en { "Dashboard" } else { "仪表盘" },
+                t!("nav.dashboard").to_string(),
                 Route::Dashboard,
                 None,
                 false,
@@ -1579,7 +1580,7 @@ impl RouterApp {
                 "nav-notifications",
                 IconName::Bell,
                 Some(rgb(0xF59E0B).into()), // Amber
-                if is_en { "Notifications" } else { "系统通知" },
+                t!("nav.notifications").to_string(),
                 Route::Notifications,
                 if self.logs.len() > 1 {
                     Some(format!("{}", self.logs.len()))
@@ -1600,7 +1601,7 @@ impl RouterApp {
                 "nav-settings",
                 IconName::Settings,
                 Some(rgb(0x64748B).into()), // Slate
-                if is_en { "Settings" } else { "偏好设置" },
+                t!("nav.settings").to_string(),
                 Route::Settings,
                 None,
                 false,
@@ -1910,7 +1911,7 @@ impl RouterApp {
                                                 )
                                                 .child(Tag::secondary().small().child(provider.app.display_name()))
                                                 .when(is_current, |this| {
-                                                    this.child(Tag::primary().small().child("使用中"))
+                                                    this.child(Tag::primary().small().child(t!("provider.in_use").to_string()))
                                                 })
                                                 .child(
                                                     div()
@@ -1959,7 +1960,7 @@ impl RouterApp {
                         Button::new(SharedString::from(format!("{}-add-top", app.as_str())))
                             .primary()
                             .icon(IconName::Plus)
-                            .label("新建供应商")
+                            .label(t!("provider.new").to_string())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_create_form(app, window, cx);
                             })),
@@ -2088,14 +2089,14 @@ impl RouterApp {
                                                 .text_size(px(11.))
                                                 .font_weight(FontWeight::SEMIBOLD)
                                                 .text_color(rgb(0xFFFFFF))
-                                                .child("使用中"),
+                                                .child(t!("provider.in_use").to_string()),
                                         )
                                     })
                                     .child(
                                         if is_official {
-                                            Tag::secondary().small().child("官方")
+                                            Tag::secondary().small().child(t!("provider.official_tag").to_string())
                                         } else {
-                                            Tag::info().small().child("第三方供应商")
+                                            Tag::info().small().child(t!("provider.third_party_tag").to_string())
                                         },
                                     ),
                             )
@@ -2167,7 +2168,7 @@ impl RouterApp {
                                     } else {
                                         IconName::SquareTerminal
                                     })
-                                    .label(if is_current { "使用中" } else { "启用" })
+                                    .label(if is_current { t!("provider.in_use").to_string() } else { t!("provider.enable").to_string() })
                                     .disabled(is_current)
                                     .on_click(cx.listener({
                                         let id = id.clone();
@@ -2179,7 +2180,7 @@ impl RouterApp {
                                     .outline()
                                     .small()
                                     .icon(IconName::Settings2)
-                                    .label("编辑")
+                                    .label(t!("provider.edit").to_string())
                                     .on_click(cx.listener({
                                         let id = id.clone();
                                         move |this, _, window, cx| {
@@ -2192,7 +2193,7 @@ impl RouterApp {
                                     .outline()
                                     .small()
                                     .icon(IconName::Copy)
-                                    .label("复制")
+                                    .label(t!("provider.copy").to_string())
                                     .on_click(cx.listener({
                                         let id = id.clone();
                                         move |this, _, window, cx| this.duplicate(&id, window, cx)
@@ -2203,7 +2204,7 @@ impl RouterApp {
                                     .outline()
                                     .small()
                                     .icon(IconName::Delete)
-                                    .label("删除")
+                                    .label(t!("provider.delete").to_string())
                                     .disabled(is_current)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.confirm_delete(&id, window, cx)
@@ -2241,7 +2242,6 @@ impl RouterApp {
     }
 
     fn render_settings_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_en = self.language == AppLanguage::En;
         let border = cx.theme().sidebar_border;
         let accent = cx.theme().sidebar_accent;
         let query = self.settings_search_input.read(cx).value().to_string();
@@ -2281,7 +2281,7 @@ impl RouterApp {
                     .text_color(cx.theme().muted_foreground)
                     .hover(move |element| element.bg(accent))
                     .child(Icon::new(CustomIcon::ArrowLeft).size(px(15.)).text_color(cx.theme().muted_foreground))
-                    .child(if is_en { "Back" } else { "返回" })
+                    .child(t!("settings.back").to_string())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.route = this.previous_route;
                         cx.notify();
@@ -2307,7 +2307,7 @@ impl RouterApp {
                         this.child(self.render_settings_sidebar_item(
                             SettingsTab::General,
                             IconName::Settings,
-                            if is_en { "General" } else { "通用" },
+                            t!("settings.general").to_string(),
                             cx,
                         ))
                     })
@@ -2315,7 +2315,7 @@ impl RouterApp {
                         this.child(self.render_settings_sidebar_item(
                             SettingsTab::Usage,
                             IconName::ChartPie,
-                            if is_en { "Usage" } else { "用量" },
+                            t!("settings.usage").to_string(),
                             cx,
                         ))
                     })
@@ -2323,7 +2323,7 @@ impl RouterApp {
                         this.child(self.render_settings_sidebar_item(
                             SettingsTab::About,
                             IconName::Info,
-                            if is_en { "About" } else { "关于" },
+                            t!("settings.about").to_string(),
                             cx,
                         ))
                     })
@@ -2334,7 +2334,7 @@ impl RouterApp {
                                 .py(px(16.))
                                 .text_size(px(12.))
                                 .text_color(cx.theme().muted_foreground)
-                                .child(if is_en { "No matching settings" } else { "未找到匹配设置" }),
+                                .child(t!("settings.no_matching").to_string()),
                         )
                     }),
             )
@@ -2344,12 +2344,13 @@ impl RouterApp {
         &self,
         tab: SettingsTab,
         icon: impl Into<Icon>,
-        label: &'static str,
+        label: impl Into<SharedString>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let active = self.settings_tab == tab;
         let accent = cx.theme().sidebar_accent;
         let fg = cx.theme().sidebar_foreground;
+        let label_str = label.into();
 
         div()
             .id(SharedString::from(format!("settings-tab-{:?}", tab)))
@@ -2371,7 +2372,7 @@ impl RouterApp {
                     .flex_shrink_0()
                     .text_color(if active { cx.theme().foreground } else { fg.opacity(0.7) }),
             )
-            .child(div().flex_1().truncate().child(label))
+            .child(div().flex_1().truncate().child(label_str))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.settings_tab = tab;
                 if tab == SettingsTab::About && this.env_tools.is_empty() && !this.is_inspecting_env {
@@ -2427,7 +2428,6 @@ impl RouterApp {
     }
 
     fn render_general_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_en = self.language == AppLanguage::En;
         let theme = cx.theme().clone();
         let query = self.settings_search_input.read(cx).value().to_string();
         let query = query.trim().to_lowercase();
@@ -2451,7 +2451,7 @@ impl RouterApp {
                     .text_size(px(24.))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.foreground)
-                    .child(if is_en { "General" } else { "通用" }),
+                    .child(t!("settings.general").to_string()),
             )
             .when(none_match, |this| {
                 this.child(
@@ -2467,7 +2467,7 @@ impl RouterApp {
                                 div()
                                     .text_size(px(13.))
                                     .text_color(theme.muted_foreground)
-                                    .child(if is_en { "No matching general settings found" } else { "未找到相关通用设置项" }),
+                                    .child(t!("general.no_matching_general").to_string()),
                             ),
                     ),
                 )
@@ -2482,16 +2482,12 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(2.))
-                                    .child(theme::tile_label(if is_en { "INTERFACE LANGUAGE / 界面语言" } else { "界面语言" }, cx))
+                                    .child(theme::tile_label(t!("general.interface_language").to_string(), cx))
                                     .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(theme.muted_foreground)
-                                            .child(if is_en {
-                                                "Switch and preview interface language immediately."
-                                            } else {
-                                                "切换后立即预览界面语言，保存后永久生效。"
-                                            }),
+                                            .child(t!("general.interface_language_desc").to_string()),
                                     ),
                             )
                             .child(
@@ -2531,16 +2527,12 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(2.))
-                                    .child(theme::tile_label(if is_en { "APPEARANCE THEME / 外观主题" } else { "外观主题" }, cx))
+                                    .child(theme::tile_label(t!("general.appearance_theme").to_string(), cx))
                                     .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(theme.muted_foreground)
-                                            .child(if is_en {
-                                                "Select application appearance theme, takes effect immediately."
-                                            } else {
-                                                "选择应用的外观主题，立即生效。"
-                                            }),
+                                            .child(t!("general.appearance_theme_desc").to_string()),
                                     ),
                             )
                             .child(
@@ -2552,7 +2544,7 @@ impl RouterApp {
                                             .small()
                                             .icon(IconName::Sun)
                                             .selected(self.theme == ThemePreference::Light)
-                                            .label(if is_en { "Light" } else { "浅色" })
+                                            .label(t!("general.theme_light"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.set_theme_preference(ThemePreference::Light, window, cx);
                                             })),
@@ -2563,7 +2555,7 @@ impl RouterApp {
                                             .small()
                                             .icon(IconName::Moon)
                                             .selected(self.theme == ThemePreference::Dark)
-                                            .label(if is_en { "Dark" } else { "深色" })
+                                            .label(t!("general.theme_dark"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.set_theme_preference(ThemePreference::Dark, window, cx);
                                             })),
@@ -2574,7 +2566,7 @@ impl RouterApp {
                                             .small()
                                             .icon(CustomIcon::Monitor)
                                             .selected(self.theme == ThemePreference::System)
-                                            .label(if is_en { "System" } else { "跟随系统" })
+                                            .label(t!("general.theme_system"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.set_theme_preference(ThemePreference::System, window, cx);
                                             })),
@@ -2593,16 +2585,12 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(2.))
-                                    .child(theme::tile_label(if is_en { "MAIN PAGE APPS / 主页面显示" } else { "主页面显示" }, cx))
+                                    .child(theme::tile_label(t!("general.main_page_apps").to_string(), cx))
                                     .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(theme.muted_foreground)
-                                            .child(if is_en {
-                                                "Select applications to show on the main navigation sidebar."
-                                            } else {
-                                                "选择在主页面侧边栏显示的应用。"
-                                            }),
+                                            .child(t!("general.main_page_apps_desc").to_string()),
                                     ),
                             )
                             .child(
@@ -2636,16 +2624,12 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(2.))
-                                    .child(theme::tile_label(if is_en { "WINDOW BEHAVIOR / 窗口行为" } else { "窗口行为" }, cx))
+                                    .child(theme::tile_label(t!("general.window_behavior").to_string(), cx))
                                     .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(theme.muted_foreground)
-                                            .child(if is_en {
-                                                "Manage application launch and window closing preferences."
-                                            } else {
-                                                "管理应用启动方式与窗口关闭行为。"
-                                            }),
+                                            .child(t!("general.launch_on_startup_desc").to_string()),
                                     ),
                             )
                             .child(
@@ -2679,17 +2663,13 @@ impl RouterApp {
                                                             .text_size(px(13.))
                                                             .font_weight(FontWeight::MEDIUM)
                                                             .text_color(theme.foreground)
-                                                            .child(if is_en { "Launch on Startup" } else { "开机自启" }),
+                                                            .child(t!("general.launch_on_startup").to_string()),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
                                                             .text_color(theme.muted_foreground)
-                                                            .child(if is_en {
-                                                                "Run Router Switch automatically on system startup"
-                                                            } else {
-                                                                "随系统启动自动运行 Router Switch"
-                                                            }),
+                                                            .child(t!("general.launch_on_startup_desc").to_string()),
                                                     ),
                                             ),
                                     )
@@ -2734,17 +2714,13 @@ impl RouterApp {
                                                             .text_size(px(13.))
                                                             .font_weight(FontWeight::MEDIUM)
                                                             .text_color(theme.foreground)
-                                                            .child(if is_en { "Minimize to Tray on Close" } else { "关闭时最小化到托盘" }),
+                                                            .child(t!("general.minimize_to_tray").to_string()),
                                                     )
                                                     .child(
                                                         div()
                                                             .text_size(px(11.))
                                                             .text_color(theme.muted_foreground)
-                                                            .child(if is_en {
-                                                                "Hides to system tray when clicking close button instead of quitting."
-                                                            } else {
-                                                                "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。"
-                                                            }),
+                                                            .child(t!("general.minimize_to_tray_desc").to_string()),
                                                     ),
                                             ),
                                     )
@@ -2956,7 +2932,6 @@ impl RouterApp {
     }
 
     fn render_usage_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_en = self.language == AppLanguage::En;
         let theme = cx.theme().clone();
 
         let total_cost = 18.46;
@@ -2967,10 +2942,10 @@ impl RouterApp {
         let claude_share = claude_cost / total_cost;
 
         let range_label = match self.usage_window {
-            UsageWindowChoice::Days7 => if is_en { "2026-08-17 ~ 2026-08-23 (Last 7 Days)" } else { "2026-08-17 ~ 2026-08-23 (近 7 天)" },
-            UsageWindowChoice::Days30 => if is_en { "2026-07-24 ~ 2026-08-23 (Last 30 Days)" } else { "2026-07-24 ~ 2026-08-23 (近 30 天)" },
-            UsageWindowChoice::Days90 => if is_en { "2026-05-25 ~ 2026-08-23 (Last 90 Days)" } else { "2026-05-25 ~ 2026-08-23 (近 90 天)" },
-            UsageWindowChoice::Year1 => if is_en { "2025-08-24 ~ 2026-08-23 (Last 1 Year)" } else { "2025-08-24 ~ 2026-08-23 (近 1 年)" },
+            UsageWindowChoice::Days7 => format!("2026-08-17 ~ 2026-08-23 ({})", t!("usage.days_7")),
+            UsageWindowChoice::Days30 => format!("2026-07-24 ~ 2026-08-23 ({})", t!("usage.days_30")),
+            UsageWindowChoice::Days90 => format!("2026-05-25 ~ 2026-08-23 ({})", t!("usage.days_90")),
+            UsageWindowChoice::Year1 => format!("2025-08-24 ~ 2026-08-23 ({})", t!("usage.year_1")),
         };
 
         v_flex()
@@ -2990,7 +2965,7 @@ impl RouterApp {
                                     .text_size(px(24.))
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(theme.foreground)
-                                    .child(if is_en { "Usage" } else { "用量" }),
+                                    .child(t!("settings.usage").to_string()),
                             )
                             .child(
                                 div()
@@ -3017,7 +2992,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_view_mode == UsageViewMode::Daily)
-                                            .label(if is_en { "Daily" } else { "每日" })
+                                            .label(t!("usage.view_daily"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_view_mode = UsageViewMode::Daily;
                                                 cx.notify();
@@ -3028,7 +3003,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_view_mode == UsageViewMode::Monthly)
-                                            .label(if is_en { "Monthly" } else { "每月" })
+                                            .label(t!("usage.view_monthly"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_view_mode = UsageViewMode::Monthly;
                                                 cx.notify();
@@ -3039,7 +3014,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_view_mode == UsageViewMode::Projects)
-                                            .label(if is_en { "Projects" } else { "项目" })
+                                            .label(t!("usage.view_projects"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_view_mode = UsageViewMode::Projects;
                                                 cx.notify();
@@ -3060,7 +3035,7 @@ impl RouterApp {
                                     .outline()
                                     .small()
                                     .icon(CustomIcon::RotateCw)
-                                    .tooltip(if is_en { "Refresh usage stats" } else { "刷新用量统计" })
+                                    .tooltip(t!("about.refresh").to_string())
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         let msg = if this.language == AppLanguage::En {
                                             "Usage stats refreshed"
@@ -3084,7 +3059,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_metric == UsageMetric::Cost)
-                                            .label(if is_en { "Cost" } else { "费用" })
+                                            .label(t!("usage.metric_cost"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_metric = UsageMetric::Cost;
                                                 cx.notify();
@@ -3095,7 +3070,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_metric == UsageMetric::Tokens)
-                                            .label(if is_en { "Tokens" } else { "令牌" })
+                                            .label(t!("usage.metric_tokens"))
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_metric = UsageMetric::Tokens;
                                                 cx.notify();
@@ -3137,11 +3112,7 @@ impl RouterApp {
                                         div()
                                             .text_size(px(12.))
                                             .text_color(theme.muted_foreground)
-                                            .child(if is_en {
-                                                "Calculated based on official model rates and token usage."
-                                            } else {
-                                                "基于各服务商官方费率与实际输入/输出/缓存换算"
-                                            }),
+                                            .child(t!("usage.breakdown").to_string()),
                                     ),
                             ),
                     )
@@ -3381,7 +3352,6 @@ impl RouterApp {
     }
 
     fn render_about_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_en = self.language == AppLanguage::En;
         let theme = cx.theme().clone();
 
         fn tool_icon_and_color(icon_kind: &str) -> (CustomIcon, Hsla) {
@@ -3455,11 +3425,7 @@ impl RouterApp {
                                                 div()
                                                     .text_size(px(12.))
                                                     .text_color(theme.muted_foreground)
-                                                    .child(if is_en {
-                                                        "Next-Generation AI CLI & Gateway Provider Switcher"
-                                                    } else {
-                                                        "下一代 AI CLI 与模型网关切换器 · 多应用多端点统一管理"
-                                                    }),
+                                                    .child(t!("app.subtitle").to_string()),
                                             ),
                                     ),
                             )
@@ -3472,7 +3438,7 @@ impl RouterApp {
                                             .outline()
                                             .small()
                                             .icon(IconName::Globe)
-                                            .label(if is_en { "Website" } else { "官方网站" })
+                                            .label(t!("about.website"))
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 window.push_notification(Notification::info("正在访问官方网站..."), cx);
                                             })),
@@ -3492,7 +3458,7 @@ impl RouterApp {
                                             .outline()
                                             .small()
                                             .icon(IconName::File)
-                                            .label(if is_en { "Changelog" } else { "更新日志" })
+                                            .label(t!("about.changelog"))
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 window.push_notification(Notification::info("当前版本 v0.1.0：支持 Codex, Claude Code, Grok Build, OpenCode 与 Pi"), cx);
                                             })),
@@ -3502,7 +3468,7 @@ impl RouterApp {
                                             .primary()
                                             .small()
                                             .icon(CustomIcon::RotateCw)
-                                            .label(if is_en { "Check Updates" } else { "检查更新" })
+                                            .label(t!("about.check_update"))
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 window.push_notification(Notification::success("当前已是最新版本 v0.1.0"), cx);
                                             })),
@@ -3525,16 +3491,12 @@ impl RouterApp {
                                 .child(
                                     v_flex()
                                         .gap(px(2.))
-                                        .child(theme::tile_label(if is_en { "LOCAL ENVIRONMENT CHECK / 本地环境检查" } else { "本地环境检查" }, cx))
+                                        .child(theme::tile_label(t!("about.env_check_title").to_string(), cx))
                                         .child(
                                             div()
                                                 .text_size(px(12.))
                                                 .text_color(theme.muted_foreground)
-                                                .child(if is_en {
-                                                    "Check installed AI CLI tools, latest registry versions, and installation conflicts."
-                                                } else {
-                                                    "检测本机已安装的 AI CLI 工具版本状态，支持多路径冲突诊断与一键升级。"
-                                                }),
+                                                .child(t!("about.env_check_desc").to_string()),
                                         ),
                                 )
                                 .child(
@@ -3546,7 +3508,7 @@ impl RouterApp {
                                                 .outline()
                                                 .small()
                                                 .icon(IconName::TriangleAlert)
-                                                .label(if is_en { "Diagnose Conflicts" } else { "诊断安装冲突" })
+                                                .label(t!("about.diagnose_conflicts"))
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.diagnose_all_conflicts(window, cx);
                                                 })),
@@ -3556,7 +3518,7 @@ impl RouterApp {
                                                 .outline()
                                                 .small()
                                                 .icon(CustomIcon::RotateCw)
-                                                .label(if is_en { "Refresh" } else { "刷新" })
+                                                .label(t!("about.refresh"))
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.refresh_env(window, cx);
                                                 })),
@@ -3597,11 +3559,7 @@ impl RouterApp {
                                             div()
                                                 .text_size(px(13.))
                                                 .text_color(theme.muted_foreground)
-                                                .child(if is_en {
-                                                    "Inspecting local CLI environments and querying registry..."
-                                                } else {
-                                                    "正在后台探测本地 CLI 工具与查询版本..."
-                                                }),
+                                                .child(t!("about.inspecting_tip").to_string()),
                                         )
                                         .into_any_element()
                                 } else {
@@ -3616,17 +3574,13 @@ impl RouterApp {
                                             div()
                                                 .text_size(px(13.))
                                                 .text_color(theme.muted_foreground)
-                                                .child(if is_en {
-                                                    "Click button to scan installed CLI tools, version statuses, and conflicts."
-                                                } else {
-                                                    "尚未检测本地 CLI 环境。点击下方按钮开始扫描本地工具版本与安装冲突。"
-                                                }),
+                                                .child(t!("about.empty_inspect_tip").to_string()),
                                         )
                                         .child(
                                             Button::new("about-start-inspect-btn")
                                                 .primary()
                                                 .icon(CustomIcon::RotateCw)
-                                                .label(if is_en { "Inspect Environment" } else { "开始检测环境" })
+                                                .label(t!("about.start_inspect"))
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.refresh_env(window, cx);
                                                 })),
@@ -3746,7 +3700,7 @@ impl RouterApp {
                                                                 .items_center()
                                                                 .justify_between()
                                                                 .text_size(px(12.))
-                                                                .child(div().text_color(theme.muted_foreground).child(if is_en { "Current Version" } else { "当前版本" }))
+                                                                .child(div().text_color(theme.muted_foreground).child(t!("about.current_version").to_string()))
                                                                 .child(div().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(current_ver_display)),
                                                         )
                                                         .child(
@@ -3755,7 +3709,7 @@ impl RouterApp {
                                                                 .items_center()
                                                                 .justify_between()
                                                                 .text_size(px(12.))
-                                                                .child(div().text_color(theme.muted_foreground).child(if is_en { "Latest Version" } else { "最新版本" }))
+                                                                .child(div().text_color(theme.muted_foreground).child(t!("about.latest_version").to_string()))
                                                                 .child(div().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(latest_ver_display)),
                                                         ),
                                                 )
@@ -3779,18 +3733,14 @@ impl RouterApp {
                                                                             .text_size(px(11.))
                                                                             .font_weight(FontWeight::SEMIBOLD)
                                                                             .text_color(rgb(0xD97706))
-                                                                            .child(if is_en { "Multiple Installations Detected" } else { "检测到多处安装" }),
+                                                                            .child(t!("about.multiple_installations").to_string()),
                                                                     ),
                                                             )
                                                             .child(
                                                                 div()
                                                                     .text_size(px(10.))
                                                                     .text_color(theme.muted_foreground)
-                                                                    .child(if is_en {
-                                                                        "Command line uses the one marked [Default]; upgrades may write elsewhere."
-                                                                    } else {
-                                                                        "命令行实际使用标「默认」的那处；升级可能写到了别处。"
-                                                                    }),
+                                                                    .child(t!("about.multiple_installations_tip").to_string()),
                                                             )
                                                             .children(tool.installations.iter().map(|inst| {
                                                                 h_flex()
@@ -3840,7 +3790,7 @@ impl RouterApp {
                                                                                         .bg(theme.primary.opacity(0.15))
                                                                                         .text_color(theme.primary)
                                                                                         .font_weight(FontWeight::SEMIBOLD)
-                                                                                        .child(if is_en { "Default" } else { "默认" }),
+                                                                                        .child(t!("about.default_badge").to_string()),
                                                                                 )
                                                                             }),
                                                                     )
@@ -3859,7 +3809,7 @@ impl RouterApp {
                                                                     .primary()
                                                                     .small()
                                                                     .icon(IconName::ArrowUp)
-                                                                    .label(if is_en { "Upgrade" } else { "升级" })
+                                                                    .label(t!("about.upgrade"))
                                                                     .on_click(cx.listener(move |this, _, window, cx| {
                                                                         this.run_tool_upgrade(&tid, window, cx);
                                                                     }))
@@ -3875,7 +3825,7 @@ impl RouterApp {
                                                                     .outline()
                                                                     .small()
                                                                     .disabled(true)
-                                                                    .label(if is_en { "Up to date" } else { "已是最新" })
+                                                                    .label(t!("about.uptodate"))
                                                                     .into_any_element()
                                                             } else {
                                                                 let tid = tool_id.clone();
@@ -3883,7 +3833,7 @@ impl RouterApp {
                                                                     .outline()
                                                                     .small()
                                                                     .icon(IconName::Plus)
-                                                                    .label(if is_en { "Install" } else { "一键安装" })
+                                                                    .label(t!("about.install"))
                                                                     .on_click(cx.listener(move |this, _, window, cx| {
                                                                         this.run_tool_install(&tid, window, cx);
                                                                     }))
@@ -4029,7 +3979,7 @@ impl RouterApp {
                                 Button::new("cancel-page-btn")
                                     .outline()
                                     .small()
-                                    .label("取消")
+                                    .label(t!("provider.cancel").to_string())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.form = None;
                                         cx.notify();
@@ -4040,7 +3990,7 @@ impl RouterApp {
                                     .primary()
                                     .small()
                                     .icon(IconName::Check)
-                                    .label("保存配置")
+                                    .label(t!("provider.save").to_string())
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.submit_form(window, cx);
                                     })),
@@ -4169,7 +4119,7 @@ impl RouterApp {
                                             .primary()
                                             .small()
                                             .icon(IconName::Plus)
-                                            .label("新增映射")
+                                            .label(t!("provider.add_mapping").to_string())
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.add_catalog_row(window, cx);
                                             }))
@@ -4359,7 +4309,7 @@ impl RouterApp {
                     .child(
                         Button::new("bottom-cancel-btn")
                             .outline()
-                            .label("取消")
+                            .label(t!("provider.cancel").to_string())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.form = None;
                                 cx.notify();
@@ -4369,7 +4319,7 @@ impl RouterApp {
                         Button::new("bottom-save-btn")
                             .primary()
                             .icon(IconName::Check)
-                            .label("保存供应商配置")
+                            .label(t!("provider.save").to_string())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.submit_form(window, cx);
                             })),

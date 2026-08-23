@@ -4864,6 +4864,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui-component",
+ "rust-i18n",
  "ui",
 ]
 
@@ -6400,6 +6401,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui-component-assets",
+ "rust-i18n",
  "session",
  "store",
 ]

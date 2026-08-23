@@ -31,6 +31,15 @@ pub enum AppLanguage {
     En,
 }
 
+impl AppLanguage {
+    pub fn locale_str(&self) -> &'static str {
+        match self {
+            Self::ZhCn => "zh-CN",
+            Self::En => "en",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub codex_home: Option<PathBuf>,
