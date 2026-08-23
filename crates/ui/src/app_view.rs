@@ -688,8 +688,6 @@ impl RouterApp {
             ];
         }
 
-        let env_tools = workspace.inspect_environment(false);
-
         let mut app = Self {
             workspace,
             providers: Vec::new(),
@@ -712,31 +710,10 @@ impl RouterApp {
             last_error: None,
             form: None,
             logs: vec!["应用已启动并加载工作区".into()],
-            env_tools,
-            is_inspecting_env: true,
+            env_tools: Vec::new(),
+            is_inspecting_env: false,
         };
         app.reload();
-
-        let view = cx.entity().downgrade();
-        window
-            .spawn(cx, move |cx: &mut gpui::AsyncWindowContext| {
-                let mut cx = cx.clone();
-                async move {
-                    let updated_tools = cx
-                        .background_executor()
-                        .spawn(async move { domain::inspect_all_tools(true) })
-                        .await;
-                    let _ = cx.update(|_window: &mut Window, cx: &mut App| {
-                        let _ = view.update(cx, |this, cx| {
-                            this.env_tools = updated_tools;
-                            this.is_inspecting_env = false;
-                            cx.notify();
-                        });
-                    });
-                }
-            })
-            .detach();
-
         app
     }
 
@@ -869,8 +846,10 @@ impl RouterApp {
     }
 
     fn refresh_env(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_inspecting_env {
+            return;
+        }
         self.is_inspecting_env = true;
-        self.env_tools = self.workspace.inspect_environment(false);
         cx.notify();
         window.push_notification(Notification::info("正在检测本地环境并查询最新版本..."), cx);
 
@@ -879,6 +858,19 @@ impl RouterApp {
             .spawn(cx, move |cx: &mut gpui::AsyncWindowContext| {
                 let mut cx = cx.clone();
                 async move {
+                    // 1. Fast local inspection in background thread (no UI freeze)
+                    let local_tools = cx
+                        .background_executor()
+                        .spawn(async move { domain::inspect_all_tools(false) })
+                        .await;
+                    let _ = cx.update(|_window: &mut Window, cx: &mut App| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.env_tools = local_tools;
+                            cx.notify();
+                        });
+                    });
+
+                    // 2. Full remote registry version fetch in background thread
                     let updated_tools = cx
                         .background_executor()
                         .spawn(async move { domain::inspect_all_tools(true) })
@@ -2380,8 +2372,11 @@ impl RouterApp {
                     .text_color(if active { cx.theme().foreground } else { fg.opacity(0.7) }),
             )
             .child(div().flex_1().truncate().child(label))
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 this.settings_tab = tab;
+                if tab == SettingsTab::About && this.env_tools.is_empty() && !this.is_inspecting_env {
+                    this.refresh_env(window, cx);
+                }
                 cx.notify();
             }))
     }
@@ -3589,80 +3584,130 @@ impl RouterApp {
                         )
                         // 2-Column CLI Tool Grid
                         .child(
-                            v_flex()
-                                .w_full()
-                                .gap(px(10.))
-                                .children(self.env_tools.chunks(2).map(|pair| {
-                                    h_flex()
+                            if self.env_tools.is_empty() {
+                                if self.is_inspecting_env {
+                                    v_flex()
                                         .w_full()
+                                        .items_center()
+                                        .justify_center()
+                                        .py(px(40.))
                                         .gap(px(10.))
-                                        .children(pair.iter().map(|tool| {
-                                            let (icon, icon_color) = tool_icon_and_color(&tool.icon_kind);
-                                            let tool_id = tool.id.clone();
-                                            let tool_name = tool.name.clone();
-                                            let is_up = tool.is_upgradable;
-                                            let is_inst = tool.is_installed;
-                                            let is_broken = tool.installed_but_broken;
-                                            let has_conflict = tool.has_conflicts;
-
-                                            let current_ver_display = tool
-                                                .current_version
-                                                .clone()
-                                                .unwrap_or_else(|| if is_broken { "无法运行".into() } else { "未安装".into() });
-
-                                            let latest_ver_display = tool
-                                                .latest_version
-                                                .clone()
-                                                .unwrap_or_else(|| if self.is_inspecting_env { "检测中...".into() } else { "未知".into() });
-
-                                            let status_tag_text = if is_up {
-                                                "可升级"
-                                            } else if is_broken {
-                                                "无法运行"
-                                            } else if is_inst {
-                                                "已就绪"
-                                            } else {
-                                                "未安装"
-                                            };
-
+                                        .child(Icon::new(CustomIcon::RotateCw).size(px(24.)).text_color(theme.primary))
+                                        .child(
                                             div()
-                                                .flex_1()
-                                                .p(px(14.))
-                                                .rounded(px(10.))
-                                                .bg(theme.secondary.opacity(0.35))
-                                                .border_1()
-                                                .border_color(if has_conflict { Hsla::from(rgb(0xF59E0B)).opacity(0.4) } else { theme.border })
-                                                .gap(px(10.))
-                                                .child(
-                                                    // Card Header
-                                                    h_flex()
-                                                        .w_full()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .child(
-                                                            h_flex()
-                                                                .items_center()
-                                                                .gap(px(10.))
-                                                                .child(
-                                                                    div()
-                                                                        .size(px(36.))
-                                                                        .rounded(px(8.))
-                                                                        .bg(theme.border.opacity(0.5))
-                                                                        .flex()
-                                                                        .items_center()
-                                                                        .justify_center()
-                                                                        .child(Icon::new(icon).size(px(18.)).text_color(icon_color)),
-                                                                )
-                                                                .child(
-                                                                    v_flex()
-                                                                        .gap(px(2.))
-                                                                        .child(
-                                                                            h_flex()
-                                                                                .items_center()
-                                                                                .gap(px(6.))
-                                                                                .child(
-                                                                                    div()
-                                                                                        .text_size(px(14.))
+                                                .text_size(px(13.))
+                                                .text_color(theme.muted_foreground)
+                                                .child(if is_en {
+                                                    "Inspecting local CLI environments and querying registry..."
+                                                } else {
+                                                    "正在后台探测本地 CLI 工具与查询版本..."
+                                                }),
+                                        )
+                                        .into_any_element()
+                                } else {
+                                    v_flex()
+                                        .w_full()
+                                        .items_center()
+                                        .justify_center()
+                                        .py(px(32.))
+                                        .gap(px(12.))
+                                        .child(Icon::new(IconName::SquareTerminal).size(px(32.)).text_color(theme.muted_foreground))
+                                        .child(
+                                            div()
+                                                .text_size(px(13.))
+                                                .text_color(theme.muted_foreground)
+                                                .child(if is_en {
+                                                    "Click button to scan installed CLI tools, version statuses, and conflicts."
+                                                } else {
+                                                    "尚未检测本地 CLI 环境。点击下方按钮开始扫描本地工具版本与安装冲突。"
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("about-start-inspect-btn")
+                                                .primary()
+                                                .icon(CustomIcon::RotateCw)
+                                                .label(if is_en { "Inspect Environment" } else { "开始检测环境" })
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.refresh_env(window, cx);
+                                                })),
+                                        )
+                                        .into_any_element()
+                                }
+                            } else {
+                                v_flex()
+                                    .w_full()
+                                    .gap(px(10.))
+                                    .children(self.env_tools.chunks(2).map(|pair| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap(px(10.))
+                                            .children(pair.iter().map(|tool| {
+                                                let (icon, icon_color) = tool_icon_and_color(&tool.icon_kind);
+                                                let tool_id = tool.id.clone();
+                                                let tool_name = tool.name.clone();
+                                                let is_up = tool.is_upgradable;
+                                                let is_inst = tool.is_installed;
+                                                let is_broken = tool.installed_but_broken;
+                                                let has_conflict = tool.has_conflicts;
+
+                                                let current_ver_display = tool
+                                                    .current_version
+                                                    .clone()
+                                                    .unwrap_or_else(|| if is_broken { "无法运行".into() } else { "未安装".into() });
+
+                                                let latest_ver_display = tool
+                                                    .latest_version
+                                                    .clone()
+                                                    .unwrap_or_else(|| if self.is_inspecting_env { "检测中...".into() } else { "未知".into() });
+
+                                                let status_tag_text = if is_up {
+                                                    "可升级"
+                                                } else if is_broken {
+                                                    "无法运行"
+                                                } else if is_inst {
+                                                    "已就绪"
+                                                } else {
+                                                    "未安装"
+                                                };
+
+                                                div()
+                                                    .flex_1()
+                                                    .p(px(14.))
+                                                    .rounded(px(10.))
+                                                    .bg(theme.secondary.opacity(0.35))
+                                                    .border_1()
+                                                    .border_color(if has_conflict { Hsla::from(rgb(0xF59E0B)).opacity(0.4) } else { theme.border })
+                                                    .gap(px(10.))
+                                                    .child(
+                                                        // Card Header
+                                                        h_flex()
+                                                            .w_full()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap(px(10.))
+                                                                    .child(
+                                                                        div()
+                                                                            .size(px(36.))
+                                                                            .rounded(px(8.))
+                                                                            .bg(theme.border.opacity(0.5))
+                                                                            .flex()
+                                                                            .items_center()
+                                                                            .justify_center()
+                                                                            .child(Icon::new(icon).size(px(18.)).text_color(icon_color)),
+                                                                    )
+                                                                    .child(
+                                                                        v_flex()
+                                                                            .gap(px(2.))
+                                                                            .child(
+                                                                                h_flex()
+                                                                                    .items_center()
+                                                                                    .gap(px(6.))
+                                                                                    .child(
+                                                                                        div()
+                                                                                            .text_size(px(14.))
                                                                                         .font_weight(FontWeight::SEMIBOLD)
                                                                                         .text_color(theme.foreground)
                                                                                         .child(tool_name.clone()),
@@ -3849,7 +3894,9 @@ impl RouterApp {
                                                 )
                                         }))
                                         .when(pair.len() == 1, |this| this.child(div().flex_1()))
-                                }))
+                                    }))
+                                    .into_any_element()
+                            }
                         ),
                 ),
             )
