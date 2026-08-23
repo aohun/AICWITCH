@@ -23,6 +23,7 @@ use gpui_component::{
 use session::Workspace;
 use store::ThemePreference;
 
+use crate::assets::CustomIcon;
 use crate::theme::{self, StatusColors};
 
 pub const CHROME_HEIGHT: f32 = 44.;
@@ -402,7 +403,7 @@ impl RouterApp {
     fn nav_item(
         &self,
         id: &'static str,
-        icon: IconName,
+        icon: impl Into<Icon>,
         label: &'static str,
         route: Route,
         badge: Option<String>,
@@ -473,7 +474,7 @@ impl RouterApp {
             ))
             .child(self.nav_item(
                 "nav-codex",
-                IconName::SquareTerminal,
+                CustomIcon::OpenAI,
                 "Codex",
                 Route::Codex,
                 Some(format!("{count}")),
@@ -482,7 +483,7 @@ impl RouterApp {
             ))
             .child(self.nav_item(
                 "nav-claude",
-                IconName::Bot,
+                CustomIcon::Claude,
                 "Claude Code",
                 Route::Claude,
                 Some("即将支持".into()),
@@ -491,7 +492,7 @@ impl RouterApp {
             ))
             .child(self.nav_item(
                 "nav-grok",
-                IconName::Globe,
+                CustomIcon::Grok,
                 "Grok Build",
                 Route::Grok,
                 Some("即将支持".into()),
@@ -547,12 +548,7 @@ impl RouterApp {
     }
 
     fn render_chrome(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let left_pad = if cfg!(target_os = "macos") { 78. } else { 12. };
-        let sidebar_tooltip = if self.sidebar_open {
-            "隐藏侧边栏"
-        } else {
-            "显示侧边栏"
-        };
+        let left_pad = if cfg!(target_os = "macos") { 108. } else { 16. };
 
         h_flex()
             .absolute()
@@ -570,24 +566,14 @@ impl RouterApp {
             .child(
                 h_flex()
                     .items_center()
-                    .gap(px(4.))
                     .child(self.chrome_button(
                         "chrome-sidebar",
                         IconName::PanelLeft,
-                        sidebar_tooltip,
+                        "切换侧边栏 ⌘ B",
                         cx,
                         |this, _, cx| {
                             this.sidebar_open = !this.sidebar_open;
                             cx.notify();
-                        },
-                    ))
-                    .child(self.chrome_button(
-                        "chrome-add",
-                        IconName::Plus,
-                        "新建供应商",
-                        cx,
-                        |this, window, cx| {
-                            this.open_create_form(window, cx);
                         },
                     )),
             )
@@ -1512,6 +1498,13 @@ impl Render for RouterApp {
             .bg(cx.theme().sidebar)
             .text_color(cx.theme().foreground)
             .font_family(".SystemUIFont")
+            .key_context("RouterApp")
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                if (event.keystroke.modifiers.platform || event.keystroke.modifiers.control) && event.keystroke.key == "b" {
+                    this.sidebar_open = !this.sidebar_open;
+                    cx.notify();
+                }
+            }))
             .when(self.sidebar_open, |this| {
                 this.child(self.render_sidebar(cx))
             })

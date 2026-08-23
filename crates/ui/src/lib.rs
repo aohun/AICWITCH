@@ -1,4 +1,5 @@
 mod app_view;
+pub mod assets;
 mod theme;
 
 use gpui::{
@@ -8,10 +9,11 @@ use gpui::{
 use gpui_component::Root;
 
 use crate::app_view::RouterApp;
+use crate::assets::AppAssets;
 
 pub fn run() {
     Application::new()
-        .with_assets(gpui_component_assets::Assets)
+        .with_assets(AppAssets)
         .run(|cx: &mut App| {
             gpui_component::init(cx);
             theme::apply_palette(cx);
