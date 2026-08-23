@@ -1493,51 +1493,59 @@ impl Render for RouterApp {
             Route::Settings => self.render_settings_page(cx).into_any_element(),
         };
 
-        h_flex()
+        div()
             .size_full()
             .relative()
-            .bg(cx.theme().sidebar)
-            .text_color(cx.theme().foreground)
-            .font_family(".SystemUIFont")
-            .key_context("RouterApp")
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                if (event.keystroke.modifiers.platform || event.keystroke.modifiers.control) && event.keystroke.key == "b" {
-                    this.sidebar_open = !this.sidebar_open;
-                    cx.notify();
-                }
-            }))
-            .when(self.sidebar_open, |this| {
-                this.child(self.render_sidebar(cx))
-            })
             .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .min_w_0()
-                    .p(px(8.))
-                    .when(self.sidebar_open, |this| this.pl(px(0.)))
+                h_flex()
+                    .size_full()
+                    .relative()
+                    .bg(cx.theme().sidebar)
+                    .text_color(cx.theme().foreground)
+                    .font_family(".SystemUIFont")
+                    .key_context("RouterApp")
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                        if (event.keystroke.modifiers.platform || event.keystroke.modifiers.control) && event.keystroke.key == "b" {
+                            this.sidebar_open = !this.sidebar_open;
+                            cx.notify();
+                        }
+                    }))
+                    .when(self.sidebar_open, |this| {
+                        this.child(self.render_sidebar(cx))
+                    })
                     .child(
                         div()
-                            .size_full()
-                            .rounded(px(14.))
-                            .overflow_hidden()
-                            .flex()
-                            .flex_col()
-                            .bg(theme::inset_bg(dark))
-                            .shadow_sm()
-                            .when(!self.sidebar_open, |this| this.pt(px(28.)))
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .p(px(8.))
+                            .when(self.sidebar_open, |this| this.pl(px(0.)))
                             .child(
                                 div()
-                                    .id("main-scroll")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .p(px(20.))
-                                    .overflow_y_scrollbar()
-                                    .child(page),
+                                    .size_full()
+                                    .rounded(px(14.))
+                                    .overflow_hidden()
+                                    .flex()
+                                    .flex_col()
+                                    .bg(theme::inset_bg(dark))
+                                    .shadow_sm()
+                                    .when(!self.sidebar_open, |this| this.pt(px(28.)))
+                                    .child(
+                                        div()
+                                            .id("main-scroll")
+                                            .flex_1()
+                                            .min_h_0()
+                                            .p(px(20.))
+                                            .overflow_y_scrollbar()
+                                            .child(page),
+                                    ),
                             ),
-                    ),
+                    )
+                    .child(self.render_chrome(window, cx)),
             )
-            .child(self.render_chrome(window, cx))
+            .children(gpui_component::Root::render_dialog_layer(window, cx))
+            .children(gpui_component::Root::render_sheet_layer(window, cx))
+            .children(gpui_component::Root::render_notification_layer(window, cx))
     }
 }
 
