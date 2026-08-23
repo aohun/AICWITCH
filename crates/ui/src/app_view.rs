@@ -7,7 +7,7 @@ use domain::{
 use gpui::{
     div, prelude::FluentBuilder, px, rgb, App, AppContext, Context, Entity, FontWeight, Hsla,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, WindowControlArea,
+    StatefulInteractiveElement, Styled, Subscription, Window, WindowControlArea,
 };
 use gpui_component::{
     alert::Alert,
@@ -17,6 +17,7 @@ use gpui_component::{
     input::{Input, InputState},
     notification::Notification,
     scroll::ScrollableElement,
+    select::{Select, SelectEvent, SelectItem, SelectState},
     tag::Tag,
     v_flex, ActiveTheme, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt,
 };
@@ -27,6 +28,61 @@ use crate::assets::CustomIcon;
 use crate::theme::{self, StatusColors};
 
 pub const CHROME_HEIGHT: f32 = 46.;
+
+#[derive(Debug, Clone)]
+pub struct PresetSelectItem {
+    pub preset: CodexPreset,
+}
+
+impl SelectItem for PresetSelectItem {
+    type Value = &'static str;
+
+    fn title(&self) -> SharedString {
+        self.preset.name.into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.preset.id
+    }
+
+    fn render(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let is_official = self.preset.kind.is_official();
+        h_flex()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .gap(px(8.))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(if is_official {
+                        IconName::Bot
+                    } else {
+                        IconName::SquareTerminal
+                    })
+                    .child(div().child(self.preset.name)),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if is_official {
+                        "OAuth"
+                    } else {
+                        self.preset.model
+                    }),
+            )
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        let q = query.to_lowercase();
+        self.preset.name.to_lowercase().contains(&q)
+            || self.preset.model.to_lowercase().contains(&q)
+            || self.preset.base_url.to_lowercase().contains(&q)
+            || self.preset.id.to_lowercase().contains(&q)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -60,6 +116,8 @@ struct FormDraft {
     api_key: Entity<InputState>,
     base_url: Entity<InputState>,
     model: Entity<InputState>,
+    preset_select: Entity<SelectState<Vec<PresetSelectItem>>>,
+    _preset_sub: Option<Subscription>,
 }
 
 impl RouterApp {
@@ -192,20 +250,6 @@ impl RouterApp {
                 self.logs.push("复制了供应商配置".into());
                 notify_success("已复制供应商配置", window, cx);
             }
-            Err(error) => self.fail(error, window, cx),
-        }
-        cx.notify();
-    }
-
-    fn import_live(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.workspace.import_live() {
-            Ok(Some(provider)) => {
-                let name = provider.name.clone();
-                self.reload();
-                self.logs.push(format!("成功从 live 导入供应商: {}", name));
-                notify_success("已从当前 ~/.codex live 成功导入第三方供应商", window, cx);
-            }
-            Ok(None) => notify_success("当前 live 环境没有检测到可导入的第三方端点", window, cx),
             Err(error) => self.fail(error, window, cx),
         }
         cx.notify();
@@ -887,7 +931,30 @@ impl RouterApp {
 
         v_flex()
             .w_full()
-            .gap(px(12.))
+            .gap(px(14.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(Input::new(&self.search_input).cleanable(true)),
+                    )
+                    .child(
+                        Button::new("codex-add-top")
+                            .primary()
+                            .icon(IconName::Plus)
+                            .label("新建供应商")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_create_form(window, cx);
+                            })),
+                    ),
+            )
             .child(
                 if self.providers.is_empty() {
                     empty_state(cx).into_any_element()
@@ -900,40 +967,6 @@ impl RouterApp {
                         .children(filtered.iter().map(|provider| {
                             self.provider_card(provider, cx)
                         }))
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .justify_center()
-                                .gap(px(12.))
-                                .py(px(12.))
-                                .rounded(px(12.))
-                                .border_1()
-                                .border_dashed()
-                                .border_color(cx.theme().sidebar_border)
-                                .text_size(px(13.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child(
-                                    Button::new("codex-add-bottom")
-                                        .ghost()
-                                        .small()
-                                        .icon(IconName::Plus)
-                                        .label("新建供应商")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.open_create_form(window, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("codex-import-bottom")
-                                        .ghost()
-                                        .small()
-                                        .icon(IconName::FolderOpen)
-                                        .label("从 Live 导入")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.import_live(window, cx);
-                                        })),
-                                ),
-                        )
                         .into_any_element()
                 },
             )
@@ -1370,27 +1403,13 @@ impl RouterApp {
                             .text_size(px(12.))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.foreground)
-                            .child("快速预设模版："),
+                            .child("选择预设供应商模版（支持搜索）："),
                     )
                     .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap(px(6.))
-                            .children(RESPONSES_PRESETS.iter().copied().map(|preset| {
-                                let view = view.clone();
-                                Button::new(SharedString::from(format!("preset-{}", preset.id)))
-                                    .outline()
-                                    .small()
-                                    .icon(if preset.kind.is_official() {
-                                        IconName::Bot
-                                    } else {
-                                        IconName::SquareTerminal
-                                    })
-                                    .label(preset.name)
-                                    .on_click(move |_, window, cx| {
-                                        view.update(cx, |this, cx| this.apply_preset(preset, window, cx));
-                                    })
-                            })),
+                        Select::new(&form.preset_select)
+                            .placeholder("从预设模版快速填充 (如 DeepSeek, Kimi, 阿里百炼...)")
+                            .search_placeholder("搜索预设模版...")
+                            .cleanable(true),
                     ),
             )
             .child(Divider::horizontal())
@@ -1545,6 +1564,40 @@ impl FormDraft {
         window: &mut Window,
         cx: &mut Context<RouterApp>,
     ) -> Self {
+        let presets: Vec<PresetSelectItem> = RESPONSES_PRESETS
+            .iter()
+            .copied()
+            .map(|p| PresetSelectItem { preset: p })
+            .collect();
+
+        let selected_index = if form.name.trim().is_empty() {
+            None
+        } else {
+            RESPONSES_PRESETS
+                .iter()
+                .position(|p| p.name == form.name)
+                .map(|idx| gpui_component::IndexPath::default().row(idx))
+        };
+
+        let preset_select = cx.new(|cx| {
+            SelectState::new(presets, selected_index, window, cx).searchable(true)
+        });
+
+        let view = cx.entity();
+        let _preset_sub = window.subscribe(
+            &preset_select,
+            cx,
+            move |_, event: &SelectEvent<Vec<PresetSelectItem>>, window, cx| {
+                if let SelectEvent::Confirm(Some(preset_id)) = event {
+                    if let Some(preset) = RESPONSES_PRESETS.iter().find(|p| p.id == *preset_id) {
+                        view.update(cx, |this, cx| {
+                            this.apply_preset(*preset, window, cx);
+                        });
+                    }
+                }
+            },
+        );
+
         Self {
             editing_id,
             kind: form.kind,
@@ -1558,6 +1611,8 @@ impl FormDraft {
             }),
             base_url: field(window, cx, &form.base_url, "https://api.example.com/v1"),
             model: field(window, cx, &form.model, "gpt-5.6-sol"),
+            preset_select,
+            _preset_sub: Some(_preset_sub),
         }
     }
 
