@@ -1903,12 +1903,6 @@ impl RouterApp {
                                                 })),
                                         ),
                                 ),
-                        )
-                        .child(
-                            Alert::info(
-                                "form-custom-notice",
-                                "第三方供应商将以 responses 协议写入 ~/.codex/config.toml 并写入 OPENAI_API_KEY。",
-                            ),
                         ),
                 ),
             )
@@ -2224,17 +2218,6 @@ impl Render for RouterApp {
 
 impl FormDraft {
     fn create(window: &mut Window, cx: &mut Context<RouterApp>) -> Self {
-        let custom_preset = RESPONSES_PRESETS
-            .iter()
-            .find(|p| p.id == "custom")
-            .copied();
-        let default_base_url = custom_preset
-            .map(|p| p.base_url)
-            .unwrap_or("https://api.example.com/v1");
-        let default_model = custom_preset
-            .map(|p| p.model)
-            .unwrap_or(domain::DEFAULT_CODEX_MODEL);
-
         Self::from_codex_form(
             None,
             CodexForm {
@@ -2242,8 +2225,8 @@ impl FormDraft {
                 website_url: String::new(),
                 kind: CodexKind::ResponsesThirdParty,
                 api_key: String::new(),
-                base_url: default_base_url.into(),
-                model: default_model.into(),
+                base_url: String::new(),
+                model: String::new(),
                 model_mappings: Vec::new(),
             },
             window,
