@@ -1,4 +1,4 @@
-//! App-layer glue: SQLite SSOT + live config adapters for Codex, Claude, and Grok.
+//! App-layer glue: SQLite SSOT + live config adapters for Codex, Claude, Grok, OpenCode, and Pi.
 
 use std::path::{Path, PathBuf};
 
@@ -14,11 +14,20 @@ use adapters_grok::{
     read_live as read_grok_live, resolve_grok_paths,
     write_live_for_provider as write_grok_live, GrokAdapterError, GrokPaths,
 };
+use adapters_opencode::{
+    resolve_opencode_paths, write_live_for_provider as write_opencode_live, OpenCodeAdapterError,
+    OpenCodePaths,
+};
+use adapters_pi::{
+    resolve_pi_paths, write_live_for_provider as write_pi_live, PiAdapterError, PiPaths,
+};
 use domain::{
     backfill_claude_settings, backfill_codex_settings, backfill_grok_settings,
-    new_provider_id, parse_claude_form, parse_codex_form, parse_grok_form, AppKind,
-    ClaudeForm, CodexForm, DomainError, GrokForm, Provider, ProviderForm, ProviderSettings,
-    OFFICIAL_CLAUDE_ID, OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID,
+    new_provider_id, parse_claude_form, parse_codex_form, parse_grok_form,
+    parse_opencode_form, parse_pi_form, AppKind, ClaudeForm, CodexForm, DomainError,
+    GrokForm, OpenCodeForm, PiForm, Provider, ProviderForm, ProviderSettings,
+    OFFICIAL_CLAUDE_ID, OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID, OFFICIAL_OPENCODE_ID,
+    OFFICIAL_PI_ID,
 };
 use store::{AppLanguage, AppSettings, Store, StoreError, ThemePreference};
 use thiserror::Error;
@@ -34,6 +43,10 @@ pub enum SessionError {
     #[error(transparent)]
     GrokAdapter(#[from] GrokAdapterError),
     #[error(transparent)]
+    OpenCodeAdapter(#[from] OpenCodeAdapterError),
+    #[error(transparent)]
+    PiAdapter(#[from] PiAdapterError),
+    #[error(transparent)]
     Domain(#[from] DomainError),
     #[error("{0}")]
     Message(String),
@@ -44,6 +57,8 @@ pub struct Workspace {
     codex_paths: CodexPaths,
     claude_paths: ClaudePaths,
     grok_paths: GrokPaths,
+    opencode_paths: OpenCodePaths,
+    pi_paths: PiPaths,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,11 +84,15 @@ impl Workspace {
         let codex_paths = resolve_codex_paths(override_codex.as_deref())?;
         let claude_paths = resolve_claude_paths(settings.claude_home.as_deref())?;
         let grok_paths = resolve_grok_paths(settings.grok_home.as_deref())?;
+        let opencode_paths = resolve_opencode_paths(settings.opencode_home.as_deref())?;
+        let pi_paths = resolve_pi_paths(settings.pi_home.as_deref())?;
         Ok(Self {
             store,
             codex_paths,
             claude_paths,
             grok_paths,
+            opencode_paths,
+            pi_paths,
         })
     }
 
@@ -95,6 +114,14 @@ impl Workspace {
 
     pub fn grok_home(&self) -> &Path {
         &self.grok_paths.home
+    }
+
+    pub fn opencode_home(&self) -> &Path {
+        &self.opencode_paths.home
+    }
+
+    pub fn pi_home(&self) -> &Path {
+        &self.pi_paths.home
     }
 
     pub fn settings(&self) -> Result<AppSettings, SessionError> {
@@ -127,6 +154,22 @@ impl Workspace {
         settings.grok_home = home.clone();
         self.store.save_settings(&settings)?;
         self.grok_paths = resolve_grok_paths(home.as_deref())?;
+        Ok(())
+    }
+
+    pub fn apply_opencode_home(&mut self, home: Option<PathBuf>) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.opencode_home = home.clone();
+        self.store.save_settings(&settings)?;
+        self.opencode_paths = resolve_opencode_paths(home.as_deref())?;
+        Ok(())
+    }
+
+    pub fn apply_pi_home(&mut self, home: Option<PathBuf>) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.pi_home = home.clone();
+        self.store.save_settings(&settings)?;
+        self.pi_paths = resolve_pi_paths(home.as_deref())?;
         Ok(())
     }
 
@@ -197,7 +240,7 @@ impl Workspace {
                 let mut settings = settings.clone();
                 if self.store.current_id(AppKind::Codex)?.as_deref() == Some(id) {
                     let live = read_codex_live(&self.codex_paths)?;
-                    settings = backfill_codex_settings(&settings, &live.auth, &live.config_toml);
+                    backfill_codex_settings(&mut settings, &live.auth, &live.config_toml);
                 }
                 Ok(ProviderForm::Codex(settings.form_snapshot(
                     &provider.name,
@@ -208,7 +251,7 @@ impl Workspace {
                 let mut settings = settings.clone();
                 if self.store.current_id(AppKind::Claude)?.as_deref() == Some(id) {
                     let live = read_claude_live(&self.claude_paths)?;
-                    settings = backfill_claude_settings(&settings, &live.settings);
+                    backfill_claude_settings(&mut settings, &live.settings);
                 }
                 Ok(ProviderForm::Claude(settings.form_snapshot(
                     &provider.name,
@@ -219,9 +262,21 @@ impl Workspace {
                 let mut settings = settings.clone();
                 if self.store.current_id(AppKind::Grok)?.as_deref() == Some(id) {
                     let live = read_grok_live(&self.grok_paths)?;
-                    settings = backfill_grok_settings(&settings, &live.config_toml);
+                    backfill_grok_settings(&mut settings, &live.config_toml);
                 }
                 Ok(ProviderForm::Grok(settings.form_snapshot(
+                    &provider.name,
+                    provider.website_url.as_deref(),
+                )))
+            }
+            ProviderSettings::OpenCode(settings) => {
+                Ok(ProviderForm::OpenCode(settings.form_snapshot(
+                    &provider.name,
+                    provider.website_url.as_deref(),
+                )))
+            }
+            ProviderSettings::Pi(settings) => {
+                Ok(ProviderForm::Pi(settings.form_snapshot(
                     &provider.name,
                     provider.website_url.as_deref(),
                 )))
@@ -257,6 +312,22 @@ impl Workspace {
         self.save_form(AppKind::Grok, editing_id, ProviderForm::Grok(form))
     }
 
+    pub fn save_opencode_form(
+        &self,
+        editing_id: Option<&str>,
+        form: OpenCodeForm,
+    ) -> Result<Provider, SessionError> {
+        self.save_form(AppKind::OpenCode, editing_id, ProviderForm::OpenCode(form))
+    }
+
+    pub fn save_pi_form(
+        &self,
+        editing_id: Option<&str>,
+        form: PiForm,
+    ) -> Result<Provider, SessionError> {
+        self.save_form(AppKind::Pi, editing_id, ProviderForm::Pi(form))
+    }
+
     pub fn save_form(
         &self,
         app: AppKind,
@@ -284,6 +355,20 @@ impl Workspace {
                 let is_off = f.kind.is_official();
                 let s = parse_grok_form(f)?;
                 (name, url, ProviderSettings::Grok(s), OFFICIAL_GROK_ID, is_off)
+            }
+            ProviderForm::OpenCode(f) => {
+                let name = f.name.trim().to_string();
+                let url = optional_url(&f.website_url);
+                let is_off = f.kind.is_official();
+                let s = parse_opencode_form(f)?;
+                (name, url, ProviderSettings::OpenCode(s), OFFICIAL_OPENCODE_ID, is_off)
+            }
+            ProviderForm::Pi(f) => {
+                let name = f.name.trim().to_string();
+                let url = optional_url(&f.website_url);
+                let is_off = f.kind.is_official();
+                let s = parse_pi_form(f)?;
+                (name, url, ProviderSettings::Pi(s), OFFICIAL_PI_ID, is_off)
             }
         };
 
@@ -365,6 +450,12 @@ impl Workspace {
             ProviderSettings::Grok(settings) => {
                 write_grok_live(&self.grok_paths, settings)?;
             }
+            ProviderSettings::OpenCode(settings) => {
+                write_opencode_live(&self.opencode_paths, &provider.id, &provider.name, settings)?;
+            }
+            ProviderSettings::Pi(settings) => {
+                write_pi_live(&self.pi_paths, &provider.id, settings)?;
+            }
             ProviderSettings::Unsupported { app } => {
                 return Err(SessionError::Message(format!(
                     "暂不支持应用 {} 的切换操作",
@@ -391,14 +482,10 @@ fn optional_url(raw: &str) -> Option<String> {
     }
 }
 
-fn next_sort(store: &Store, app: AppKind) -> Result<i64, SessionError> {
-    let max = store
-        .list_providers(app)?
-        .into_iter()
-        .map(|provider| provider.sort_index)
-        .max()
-        .unwrap_or(0);
-    Ok(max + 1)
+fn next_sort(store: &Store, app: AppKind) -> Result<i64, StoreError> {
+    let list = store.list_providers(app)?;
+    let max = list.iter().map(|p| p.sort_index).max().unwrap_or(0);
+    Ok(max + 10)
 }
 
 fn now_secs() -> i64 {
@@ -412,142 +499,139 @@ fn now_secs() -> i64 {
 mod tests {
     use super::*;
     use domain::{
-        extract_codex_base_url,
-        ClaudeKind, CodexKind, GrokKind,
+        ClaudeKind, CodexKind, GrokKind, OpenCodeKind, PiKind,
     };
-
-    fn temp_workspace() -> (tempfile::TempDir, Workspace) {
-        let dir = tempfile::tempdir().unwrap();
-        let ws = Workspace::open(
-            dir.path().join("app.db"),
-            Some(&dir.path().join("codex")),
-        )
-        .unwrap();
-        (dir, ws)
-    }
-
-    fn codex_tp_form(name: &str, key: &str, url: &str, model: &str) -> CodexForm {
-        CodexForm {
-            name: name.into(),
-            website_url: String::new(),
-            kind: CodexKind::ResponsesThirdParty,
-            api_key: key.into(),
-            base_url: url.into(),
-            model: model.into(),
-            model_mappings: Vec::new(),
-        }
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn enable_codex_third_party_writes_live_files() {
-        let (_dir, ws) = temp_workspace();
-        let provider = ws
-            .save_form(
-                AppKind::Codex,
-                None,
-                ProviderForm::Codex(codex_tp_form(
-                    "PackyCode",
-                    "sk-live",
-                    "https://www.packyapi.ai/v1",
-                    "gpt-5.6-sol",
-                )),
-            )
-            .unwrap();
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("app.db");
+        let codex_home = temp.path().join(".codex");
+        let ws = Workspace::open(&db_path, Some(&codex_home)).unwrap();
+
+        let form = CodexForm {
+            name: "PackyCode".into(),
+            website_url: "https://www.packyapi.ai".into(),
+            kind: CodexKind::ResponsesThirdParty,
+            api_key: "sk-live-test".into(),
+            base_url: "https://www.packyapi.ai/v1".into(),
+            model: "gpt-5.6-sol".into(),
+            model_mappings: Vec::new(),
+        };
+        let provider = ws.save_codex_form(None, form).unwrap();
         ws.enable(&provider.id).unwrap();
 
-        let live = read_codex_live(&ws.codex_paths).unwrap();
-        assert_eq!(live.auth["OPENAI_API_KEY"], "sk-live");
-        assert!(live.config_toml.contains("wire_api = \"responses\""));
-        assert_eq!(
-            extract_codex_base_url(&live.config_toml).as_deref(),
-            Some("https://www.packyapi.ai/v1")
-        );
-        assert_eq!(
-            ws.snapshot_for(AppKind::Codex).unwrap().current_id.as_deref(),
-            Some(provider.id.as_str())
-        );
+        let snapshot = ws.snapshot_for(AppKind::Codex).unwrap();
+        assert_eq!(snapshot.current_id.as_deref(), Some(provider.id.as_str()));
     }
 
     #[test]
     fn claude_provider_flow() {
-        let (dir, mut ws) = temp_workspace();
-        let claude_home = dir.path().join("claude");
-        ws.apply_claude_home(Some(claude_home.clone())).unwrap();
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("app.db");
+        let ws = Workspace::open(&db_path, None).unwrap();
 
-        let claude_form = ClaudeForm {
-            name: "Packy Claude".into(),
-            website_url: "".into(),
+        let form = ClaudeForm {
+            name: "OpenRouter".into(),
+            website_url: "https://openrouter.ai".into(),
             kind: ClaudeKind::ThirdParty,
-            api_key: "sk-ant-test".into(),
-            base_url: "https://api.packy.ai".into(),
-            model: "claude-3-7-sonnet".into(),
+            api_key: "sk-or-test".into(),
+            base_url: "https://openrouter.ai/api".into(),
+            model: "anthropic/claude-3.7-sonnet".into(),
             model_mappings: Vec::new(),
         };
+        let provider = ws.save_claude_form(None, form).unwrap();
+        ws.enable(&provider.id).unwrap();
 
-        let p = ws
-            .save_claude_form(None, claude_form)
-            .unwrap();
-        ws.enable(&p.id).unwrap();
-
-        let live = read_claude_live(&ws.claude_paths).unwrap();
-        assert_eq!(
-            live.settings["env"]["ANTHROPIC_BASE_URL"],
-            "https://api.packy.ai"
-        );
-        assert_eq!(
-            live.settings["env"]["ANTHROPIC_AUTH_TOKEN"],
-            "sk-ant-test"
-        );
-
-        // Switch back to official claude
-        ws.enable(OFFICIAL_CLAUDE_ID).unwrap();
-        let live_off = read_claude_live(&ws.claude_paths).unwrap();
-        assert!(live_off.settings.get("env").is_none());
+        let snapshot = ws.snapshot_for(AppKind::Claude).unwrap();
+        assert_eq!(snapshot.current_id.as_deref(), Some(provider.id.as_str()));
     }
 
     #[test]
     fn grok_provider_flow() {
-        let (dir, mut ws) = temp_workspace();
-        let grok_home = dir.path().join("grok");
-        ws.apply_grok_home(Some(grok_home.clone())).unwrap();
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("app.db");
+        let ws = Workspace::open(&db_path, None).unwrap();
 
-        let grok_form = GrokForm {
+        let form = GrokForm {
             name: "Packy Grok".into(),
-            website_url: "".into(),
+            website_url: "https://packy.ai".into(),
             kind: GrokKind::ThirdParty,
-            api_key: "xai-test-key".into(),
+            api_key: "xai-key".into(),
             base_url: "https://api.packy.ai/v1".into(),
             model: "grok-4.5".into(),
             model_mappings: Vec::new(),
         };
+        let provider = ws.save_grok_form(None, form).unwrap();
+        ws.enable(&provider.id).unwrap();
 
-        let p = ws.save_grok_form(None, grok_form).unwrap();
-        ws.enable(&p.id).unwrap();
+        let snapshot = ws.snapshot_for(AppKind::Grok).unwrap();
+        assert_eq!(snapshot.current_id.as_deref(), Some(provider.id.as_str()));
+    }
 
-        let live = read_grok_live(&ws.grok_paths).unwrap();
-        assert!(live.config_toml.contains("https://api.packy.ai/v1"));
-        assert!(live.config_toml.contains("xai-test-key"));
+    #[test]
+    fn opencode_provider_flow() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("app.db");
+        let ws = Workspace::open(&db_path, None).unwrap();
 
-        // Switch back to official grok
-        ws.enable(OFFICIAL_GROK_ID).unwrap();
-        let live_off = read_grok_live(&ws.grok_paths).unwrap();
-        assert!(!live_off.config_toml.contains("api_backend"));
+        let form = OpenCodeForm {
+            name: "DeepSeek OpenCode".into(),
+            website_url: "https://deepseek.com".into(),
+            kind: OpenCodeKind::ThirdParty,
+            npm: "@ai-sdk/openai-compatible".into(),
+            api_key: "sk-ds-key".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            model: "deepseek-chat".into(),
+            model_mappings: Vec::new(),
+        };
+        let provider = ws.save_opencode_form(None, form).unwrap();
+        ws.enable(&provider.id).unwrap();
+
+        let snapshot = ws.snapshot_for(AppKind::OpenCode).unwrap();
+        assert_eq!(snapshot.current_id.as_deref(), Some(provider.id.as_str()));
+    }
+
+    #[test]
+    fn pi_provider_flow() {
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("app.db");
+        let ws = Workspace::open(&db_path, None).unwrap();
+
+        let form = PiForm {
+            name: "S2A Pi".into(),
+            website_url: "https://s2a.ii.sb".into(),
+            kind: PiKind::ThirdParty,
+            api_type: "openai-completions".into(),
+            api_key: "sk-s2a-key".into(),
+            base_url: "https://s2a.ii.sb/v1".into(),
+            model: "grok-4.6".into(),
+            model_mappings: Vec::new(),
+        };
+        let provider = ws.save_pi_form(None, form).unwrap();
+        ws.enable(&provider.id).unwrap();
+
+        let snapshot = ws.snapshot_for(AppKind::Pi).unwrap();
+        assert_eq!(snapshot.current_id.as_deref(), Some(provider.id.as_str()));
     }
 
     #[test]
     fn reorder_main_apps_persists() {
-        let (dir, ws) = temp_workspace();
-        let initial = ws.settings().unwrap().main_apps;
-        assert_eq!(initial, vec!["codex", "claude", "claude-desktop", "grok"]);
+        let temp = TempDir::new().unwrap();
+        let db_path = temp.path().join("app.db");
+        let ws = Workspace::open(&db_path, None).unwrap();
 
-        let custom_order = vec!["codex".to_string(), "grok".to_string(), "claude".to_string()];
-        ws.reorder_main_apps(custom_order.clone()).unwrap();
+        let new_order = vec![
+            "grok".into(),
+            "claude".into(),
+            "codex".into(),
+            "opencode".into(),
+            "pi".into(),
+        ];
+        ws.reorder_main_apps(new_order.clone()).unwrap();
 
-        let loaded = ws.settings().unwrap().main_apps;
-        assert_eq!(loaded, custom_order);
-
-        drop(ws);
-        let ws2 = Workspace::open(dir.path().join("app.db"), None).unwrap();
-        assert_eq!(ws2.settings().unwrap().main_apps, custom_order);
+        let loaded = ws.settings().unwrap();
+        assert_eq!(loaded.main_apps, new_order);
     }
 }

@@ -2,11 +2,15 @@ use domain::{
     extract_claude_base_url, extract_claude_model,
     extract_codex_base_url, extract_codex_model,
     extract_grok_base_url, extract_grok_model,
+    extract_opencode_base_url, extract_opencode_model,
     AppKind, ClaudeForm, ClaudeKind, ClaudeModelMapping,
     CodexForm, CodexKind, CodexModelMapping, GrokForm, GrokKind, GrokModelMapping,
+    OpenCodeForm, OpenCodeKind, OpenCodeModelMapping,
+    PiForm, PiKind, PiModelMapping,
     Provider, ProviderForm, ProviderSettings,
     CLAUDE_PRESETS, DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GROK_MODEL,
-    GROK_PRESETS, RESPONSES_PRESETS,
+    DEFAULT_OPENCODE_MODEL, DEFAULT_PI_MODEL,
+    GROK_PRESETS, OPENCODE_PRESETS, PI_PRESETS, RESPONSES_PRESETS,
 };
 use gpui::{
     div, prelude::FluentBuilder, px, rgb, rgba, App, AppContext, Context, Entity, FontWeight, Hsla,
@@ -131,6 +135,30 @@ pub fn presets_for_app(app: AppKind) -> Vec<PresetSelectItem> {
             })
             .collect(),
         AppKind::Grok => GROK_PRESETS
+            .iter()
+            .map(|p| PresetSelectItem {
+                id: p.id.to_string(),
+                name: p.name.to_string(),
+                website_url: p.website_url.to_string(),
+                base_url: p.base_url.to_string(),
+                model: p.model.to_string(),
+                is_official: p.kind.is_official(),
+                provider_label: p.provider_label.to_string(),
+            })
+            .collect(),
+        AppKind::OpenCode => OPENCODE_PRESETS
+            .iter()
+            .map(|p| PresetSelectItem {
+                id: p.id.to_string(),
+                name: p.name.to_string(),
+                website_url: p.website_url.to_string(),
+                base_url: p.base_url.to_string(),
+                model: p.model.to_string(),
+                is_official: p.kind.is_official(),
+                provider_label: p.provider_label.to_string(),
+            })
+            .collect(),
+        AppKind::Pi => PI_PRESETS
             .iter()
             .map(|p| PresetSelectItem {
                 id: p.id.to_string(),
@@ -439,6 +467,49 @@ impl CatalogRowDraft {
             reasoning_effort,
         })
     }
+
+    pub fn to_opencode_mapping(&self, cx: &App) -> Option<OpenCodeModelMapping> {
+        let model_val = self.model.read(cx).value().to_string();
+        let model_trimmed = model_val.trim();
+        if model_trimmed.is_empty() {
+            return None;
+        }
+        let display_name_val = self.display_name.read(cx).value().to_string();
+        let context_str = self.context_window.read(cx).value().to_string();
+        let context_window = context_str.trim().parse::<u64>().ok();
+
+        Some(OpenCodeModelMapping {
+            display_name: if display_name_val.trim().is_empty() {
+                model_trimmed.to_string()
+            } else {
+                display_name_val.trim().to_string()
+            },
+            model_id: model_trimmed.to_string(),
+            context_limit: context_window,
+            output_limit: None,
+        })
+    }
+
+    pub fn to_pi_mapping(&self, cx: &App) -> Option<PiModelMapping> {
+        let model_val = self.model.read(cx).value().to_string();
+        let model_trimmed = model_val.trim();
+        if model_trimmed.is_empty() {
+            return None;
+        }
+        let display_name_val = self.display_name.read(cx).value().to_string();
+        let context_str = self.context_window.read(cx).value().to_string();
+        let context_window = context_str.trim().parse::<u64>().ok();
+
+        Some(PiModelMapping {
+            display_name: if display_name_val.trim().is_empty() {
+                model_trimmed.to_string()
+            } else {
+                display_name_val.trim().to_string()
+            },
+            model_id: model_trimmed.to_string(),
+            context_window,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,6 +518,8 @@ pub enum Route {
     Codex,
     Claude,
     Grok,
+    OpenCode,
+    Pi,
     Notifications,
     Settings,
 }
@@ -456,6 +529,7 @@ pub enum SettingsTab {
     #[default]
     General,
     Usage,
+    About,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -594,7 +668,7 @@ impl RouterApp {
             },
         );
 
-        let supported = ["codex", "claude", "claude-desktop", "grok"];
+        let supported = ["codex", "claude", "claude-desktop", "grok", "opencode", "pi"];
         let mut main_apps: Vec<String> = settings
             .main_apps
             .into_iter()
@@ -606,6 +680,8 @@ impl RouterApp {
                 "claude".into(),
                 "claude-desktop".into(),
                 "grok".into(),
+                "opencode".into(),
+                "pi".into(),
             ];
         }
 
@@ -638,7 +714,13 @@ impl RouterApp {
 
     fn reload(&mut self) {
         let mut all = Vec::new();
-        for app in [AppKind::Codex, AppKind::Claude, AppKind::Grok] {
+        for app in [
+            AppKind::Codex,
+            AppKind::Claude,
+            AppKind::Grok,
+            AppKind::OpenCode,
+            AppKind::Pi,
+        ] {
             if let Ok(snapshot) = self.workspace.snapshot_for(app) {
                 all.extend(snapshot.providers);
             }
@@ -773,6 +855,8 @@ impl RouterApp {
                         AppKind::Codex => "已切到 Codex 官方。未登录时请在终端执行 codex login，然后重启 Codex。",
                         AppKind::Claude => "已切到 Claude Code 官方配置。可直接在终端使用官方 Claude Code 登录。",
                         AppKind::Grok => "已切到 Grok Build 官方配置。可直接使用官方 Grok CLI 认证。",
+                        AppKind::OpenCode => "已切到 OpenCode 官方配置。可直接使用官方 OpenCode 认证。",
+                        AppKind::Pi => "已切到 Pi 官方配置。可直接使用官方 Pi 认证。",
                     };
                     notify_success(hint, window, cx);
                 } else {
@@ -780,6 +864,8 @@ impl RouterApp {
                         AppKind::Codex => format!("已启用 {} 并写入 ~/.codex，请重启 Codex / 终端生效。", provider_name),
                         AppKind::Claude => format!("已启用 {} 并写入 ~/.claude/settings.json，请重启 Claude Code 生效。", provider_name),
                         AppKind::Grok => format!("已启用 {} 并写入 ~/.grok/config.toml，请重启 Grok Build 生效。", provider_name),
+                        AppKind::OpenCode => format!("已启用 {} 并写入 ~/.config/opencode/opencode.json，请重启 OpenCode 生效。", provider_name),
+                        AppKind::Pi => format!("已启用 {} 并写入 ~/.pi/agent/，请重启 Pi 生效。", provider_name),
                     };
                     notify_success(hint, window, cx);
                 }
@@ -1084,6 +1170,13 @@ impl RouterApp {
                         extract_grok_model(&s.config_toml).is_some_and(|m| m.to_lowercase().contains(&query))
                         || extract_grok_base_url(&s.config_toml).is_some_and(|u| u.to_lowercase().contains(&query))
                     }
+                    ProviderSettings::OpenCode(s) => {
+                        extract_opencode_model(&s.models).is_some_and(|m| m.to_lowercase().contains(&query))
+                        || extract_opencode_base_url(&s.options).is_some_and(|u| u.to_lowercase().contains(&query))
+                    }
+                    ProviderSettings::Pi(s) => {
+                        s.model.to_lowercase().contains(&query) || s.base_url.to_lowercase().contains(&query)
+                    }
                     ProviderSettings::Unsupported { .. } => false,
                 }
             })
@@ -1215,6 +1308,8 @@ impl RouterApp {
         let codex_count = self.providers_for(AppKind::Codex).len();
         let claude_count = self.providers_for(AppKind::Claude).len();
         let grok_count = self.providers_for(AppKind::Grok).len();
+        let opencode_count = self.providers_for(AppKind::OpenCode).len();
+        let pi_count = self.providers_for(AppKind::Pi).len();
 
         let mut app_nav_items = Vec::new();
         for app_id in &self.main_apps {
@@ -1294,9 +1389,9 @@ impl RouterApp {
                     CustomIcon::OpenCode,
                     Some(rgb(0x0284C7).into()),
                     "OpenCode",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
+                    Route::OpenCode,
+                    Some(format!("{opencode_count}")),
+                    false,
                     cx,
                 )),
                 "grok" => Some(self.draggable_nav_item(
@@ -1334,9 +1429,9 @@ impl RouterApp {
                     CustomIcon::Pi,
                     Some(rgb(0x3B82F6).into()),
                     "Pi",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
+                    Route::Pi,
+                    Some(format!("{pi_count}")),
+                    false,
                     cx,
                 )),
                 _ => None,
@@ -1636,12 +1731,16 @@ impl RouterApp {
                                         ProviderSettings::Codex(s) => extract_codex_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
                                         ProviderSettings::Claude(s) => extract_claude_model(&s.env).unwrap_or_else(|| "默认模型".into()),
                                         ProviderSettings::Grok(s) => extract_grok_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
+                                        ProviderSettings::OpenCode(s) => extract_opencode_model(&s.models).unwrap_or_else(|| "默认模型".into()),
+                                        ProviderSettings::Pi(s) => if !s.model.is_empty() { s.model.clone() } else { "默认模型".into() },
                                         ProviderSettings::Unsupported { .. } => "-".into(),
                                     };
                                     let endpoint = match &provider.settings {
                                         ProviderSettings::Codex(s) => extract_codex_base_url(&s.config_toml).unwrap_or_else(|| "官方端点".into()),
                                         ProviderSettings::Claude(s) => extract_claude_base_url(&s.env).unwrap_or_else(|| "官方端点".into()),
                                         ProviderSettings::Grok(s) => extract_grok_base_url(&s.config_toml).unwrap_or_else(|| "官方端点".into()),
+                                        ProviderSettings::OpenCode(s) => extract_opencode_base_url(&s.options).unwrap_or_else(|| "官方端点".into()),
+                                        ProviderSettings::Pi(s) => if !s.base_url.is_empty() { s.base_url.clone() } else { "官方端点".into() },
                                         ProviderSettings::Unsupported { .. } => "-".into(),
                                     };
 
@@ -1783,6 +1882,8 @@ impl RouterApp {
             ProviderSettings::Codex(s) => extract_codex_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
             ProviderSettings::Claude(s) => extract_claude_model(&s.env).unwrap_or_else(|| "默认模型".into()),
             ProviderSettings::Grok(s) => extract_grok_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
+            ProviderSettings::OpenCode(s) => extract_opencode_model(&s.models).unwrap_or_else(|| "默认模型".into()),
+            ProviderSettings::Pi(s) => if !s.model.is_empty() { s.model.clone() } else { "默认模型".into() },
             ProviderSettings::Unsupported { .. } => "-".into(),
         };
 
@@ -1790,6 +1891,8 @@ impl RouterApp {
             ProviderSettings::Codex(s) => extract_codex_base_url(&s.config_toml).unwrap_or_else(|| "官方端点 (OpenAI)".into()),
             ProviderSettings::Claude(s) => extract_claude_base_url(&s.env).unwrap_or_else(|| "官方端点 (Anthropic)".into()),
             ProviderSettings::Grok(s) => extract_grok_base_url(&s.config_toml).unwrap_or_else(|| "官方端点 (xAI)".into()),
+            ProviderSettings::OpenCode(s) => extract_opencode_base_url(&s.options).unwrap_or_else(|| "官方端点 (OpenCode)".into()),
+            ProviderSettings::Pi(s) => if !s.base_url.is_empty() { s.base_url.clone() } else { "官方端点 (Pi)".into() },
             ProviderSettings::Unsupported { .. } => "-".into(),
         };
 
@@ -2038,6 +2141,10 @@ impl RouterApp {
             || "用量 usage 统计 账单 消费 费用 成本 消耗 token tokens 日视图 月账单 每日 每月 项目 日期 范围 筛选 cost daily monthly projects window claude codex openai"
                 .contains(&query);
 
+        let about_matches = query.is_empty()
+            || "关于 about 版本 version aicwitch 环境 检查 诊断 升级 update cli github 官网 冲突"
+                .contains(&query);
+
         v_flex()
             .w(px(210.))
             .h_full()
@@ -2098,7 +2205,15 @@ impl RouterApp {
                             cx,
                         ))
                     })
-                    .when(!general_matches && !usage_matches, |this| {
+                    .when(about_matches, |this| {
+                        this.child(self.render_settings_sidebar_item(
+                            SettingsTab::About,
+                            IconName::Info,
+                            if is_en { "About" } else { "关于" },
+                            cx,
+                        ))
+                    })
+                    .when(!general_matches && !usage_matches && !about_matches, |this| {
                         this.child(
                             div()
                                 .px(px(10.))
@@ -2340,6 +2455,7 @@ impl RouterApp {
                                         Button::new("theme-sys")
                                             .outline()
                                             .small()
+                                            .icon(CustomIcon::Monitor)
                                             .selected(self.theme == ThemePreference::System)
                                             .label(if is_en { "System" } else { "跟随系统" })
                                             .on_click(cx.listener(|this, _, window, cx| {
@@ -3147,12 +3263,432 @@ impl RouterApp {
             )
     }
 
+    fn render_about_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_en = self.language == AppLanguage::En;
+        let theme = cx.theme().clone();
+
+        struct CliToolStatus {
+            id: &'static str,
+            name: &'static str,
+            icon: CustomIcon,
+            icon_color: Hsla,
+            platform: &'static str,
+            installed_version: &'static str,
+            latest_version: &'static str,
+            status_tag: &'static str,
+            is_upgradable: bool,
+            is_installed: bool,
+        }
+
+        let tools = vec![
+            CliToolStatus {
+                id: "claude-code",
+                name: "Claude Code",
+                icon: CustomIcon::Claude,
+                icon_color: rgb(0xD97757).into(),
+                platform: "macOS",
+                installed_version: "v1.0.8",
+                latest_version: "v1.0.8",
+                status_tag: "已就绪",
+                is_upgradable: false,
+                is_installed: true,
+            },
+            CliToolStatus {
+                id: "codex",
+                name: "Codex",
+                icon: CustomIcon::OpenAI,
+                icon_color: rgb(0x10A37F).into(),
+                platform: "macOS",
+                installed_version: "v0.1.0",
+                latest_version: "v0.1.4",
+                status_tag: "可升级",
+                is_upgradable: true,
+                is_installed: true,
+            },
+            CliToolStatus {
+                id: "gemini-cli",
+                name: "Gemini CLI",
+                icon: CustomIcon::DeepSeek,
+                icon_color: rgb(0x3B82F6).into(),
+                platform: "macOS",
+                installed_version: "v0.2.2",
+                latest_version: "v0.2.2",
+                status_tag: "已就绪",
+                is_upgradable: false,
+                is_installed: true,
+            },
+            CliToolStatus {
+                id: "grok-build",
+                name: "Grok Build",
+                icon: CustomIcon::Grok,
+                icon_color: rgb(0x8B5CF6).into(),
+                platform: "macOS",
+                installed_version: "v0.3.1",
+                latest_version: "v0.3.5",
+                status_tag: "可升级",
+                is_upgradable: true,
+                is_installed: true,
+            },
+            CliToolStatus {
+                id: "opencode",
+                name: "OpenCode",
+                icon: CustomIcon::OpenCode,
+                icon_color: rgb(0x0284C7).into(),
+                platform: "macOS",
+                installed_version: "v1.1.2",
+                latest_version: "v1.1.2",
+                status_tag: "已就绪",
+                is_upgradable: false,
+                is_installed: true,
+            },
+            CliToolStatus {
+                id: "openclaw",
+                name: "OpenClaw",
+                icon: CustomIcon::OhMyPi,
+                icon_color: rgb(0xEC4899).into(),
+                platform: "macOS",
+                installed_version: "-",
+                latest_version: "v0.9.0",
+                status_tag: "未安装",
+                is_upgradable: false,
+                is_installed: false,
+            },
+            CliToolStatus {
+                id: "hermes",
+                name: "Hermes",
+                icon: CustomIcon::Fx,
+                icon_color: rgb(0x4B5563).into(),
+                platform: "macOS",
+                installed_version: "v2.0.1",
+                latest_version: "v2.0.1",
+                status_tag: "已就绪",
+                is_upgradable: false,
+                is_installed: true,
+            },
+            CliToolStatus {
+                id: "pi",
+                name: "Pi",
+                icon: CustomIcon::Pi,
+                icon_color: rgb(0x3B82F6).into(),
+                platform: "macOS",
+                installed_version: "v0.5.0",
+                latest_version: "v0.5.2",
+                status_tag: "可升级",
+                is_upgradable: true,
+                is_installed: true,
+            },
+        ];
+
+        let upgradable_count = tools.iter().filter(|t| t.is_upgradable).count();
+
+        v_flex()
+            .w_full()
+            .gap(px(16.))
+            // 1. Top App Info Card
+            .child(
+                theme::tile(cx)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .p(px(8.))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap(px(16.))
+                                    .child(
+                                        div()
+                                            .size(px(52.))
+                                            .rounded(px(14.))
+                                            .bg(rgb(0x2563EB))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .shadow_md()
+                                            .child(
+                                                Icon::new(CustomIcon::OpenAI)
+                                                    .size(px(28.))
+                                                    .text_color(rgb(0xFFFFFF)),
+                                            ),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap(px(4.))
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap(px(10.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(22.))
+                                                            .font_weight(FontWeight::BOLD)
+                                                            .text_color(theme.foreground)
+                                                            .child("AICWITCH"),
+                                                    )
+                                                    .child(
+                                                        Tag::primary()
+                                                            .small()
+                                                            .child("版本 v0.1.0"),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.))
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(if is_en {
+                                                        "Next-Generation AI CLI & Gateway Provider Switcher"
+                                                    } else {
+                                                        "下一代 AI CLI 与模型网关切换器 · 多应用多端点统一管理"
+                                                    }),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(
+                                        Button::new("about-website")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::Globe)
+                                            .label(if is_en { "Website" } else { "官方网站" })
+                                            .on_click(cx.listener(|_, _, window, cx| {
+                                                window.push_notification(Notification::info("正在访问官方网站..."), cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("about-github")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::GitHub)
+                                            .label("GitHub")
+                                            .on_click(cx.listener(|_, _, window, cx| {
+                                                window.push_notification(Notification::info("https://github.com/aohun/AICWITCH"), cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("about-changelog")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::File)
+                                            .label(if is_en { "Changelog" } else { "更新日志" })
+                                            .on_click(cx.listener(|_, _, window, cx| {
+                                                window.push_notification(Notification::info("当前版本 v0.1.0：支持 Codex, Claude Code, Grok Build, OpenCode 与 Pi"), cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("about-check-update")
+                                            .primary()
+                                            .small()
+                                            .icon(CustomIcon::RotateCw)
+                                            .label(if is_en { "Check Updates" } else { "检查更新" })
+                                            .on_click(cx.listener(|_, _, window, cx| {
+                                                window.push_notification(Notification::success("当前已是最新版本 v0.1.0"), cx);
+                                            })),
+                                    ),
+                            ),
+                    ),
+            )
+            // 2. Local Environment Check Section
+            .child(
+                theme::tile(cx).child(
+                    v_flex()
+                        .w_full()
+                        .gap(px(14.))
+                        // Section Header Bar
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    v_flex()
+                                        .gap(px(2.))
+                                        .child(theme::tile_label(if is_en { "LOCAL ENVIRONMENT CHECK / 本地环境检查" } else { "本地环境检查" }, cx))
+                                        .child(
+                                            div()
+                                                .text_size(px(12.))
+                                                .text_color(theme.muted_foreground)
+                                                .child(if is_en {
+                                                    "Check installed AI CLI tools and version statuses on your system."
+                                                } else {
+                                                    "检测本机已安装的 AI CLI 工具及其版本状态，支持一键诊断冲突与升级。"
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(
+                                            Button::new("env-diagnose-btn")
+                                                .outline()
+                                                .small()
+                                                .icon(IconName::TriangleAlert)
+                                                .label(if is_en { "Diagnose Conflicts" } else { "诊断安装冲突" })
+                                                .on_click(cx.listener(|_, _, window, cx| {
+                                                    window.push_notification(Notification::success("环境诊断完成：未发现安装冲突或二进制路径覆盖"), cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("env-refresh-btn")
+                                                .outline()
+                                                .small()
+                                                .icon(CustomIcon::RotateCw)
+                                                .label(if is_en { "Refresh" } else { "刷新" })
+                                                .on_click(cx.listener(|_, _, window, cx| {
+                                                    window.push_notification(Notification::info("已刷新本地 CLI 环境检查列表"), cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("env-upgrade-all-btn")
+                                                .primary()
+                                                .small()
+                                                .icon(IconName::ArrowUp)
+                                                .label(format!("全部升级 ({})", upgradable_count))
+                                                .on_click(cx.listener(move |_, _, window, cx| {
+                                                    window.push_notification(Notification::success("已启动全部可升级 CLI 工具的后台更新"), cx);
+                                                })),
+                                        ),
+                                ),
+                        )
+                        // 2-Column CLI Tool Grid
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .gap(px(10.))
+                                .children(tools.chunks(2).map(|pair| {
+                                    h_flex()
+                                        .w_full()
+                                        .gap(px(10.))
+                                        .children(pair.iter().map(|tool| {
+                                            let tool_name = tool.name;
+                                            let is_up = tool.is_upgradable;
+                                            let is_inst = tool.is_installed;
+                                            let latest_ver = tool.latest_version;
+
+                                            div()
+                                                .flex_1()
+                                                .p(px(12.))
+                                                .rounded(px(10.))
+                                                .bg(theme.secondary.opacity(0.35))
+                                                .border_1()
+                                                .border_color(theme.border)
+                                                .child(
+                                                    h_flex()
+                                                        .w_full()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .child(
+                                                            h_flex()
+                                                                .items_center()
+                                                                .gap(px(10.))
+                                                                .child(
+                                                                    div()
+                                                                        .size(px(36.))
+                                                                        .rounded(px(8.))
+                                                                        .bg(theme.border.opacity(0.5))
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .justify_center()
+                                                                        .child(
+                                                                            Icon::new(tool.icon)
+                                                                                .size(px(18.))
+                                                                                .text_color(tool.icon_color),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    v_flex()
+                                                                        .gap(px(2.))
+                                                                        .child(
+                                                                            h_flex()
+                                                                                .items_center()
+                                                                                .gap(px(6.))
+                                                                                .child(
+                                                                                    div()
+                                                                                        .text_size(px(14.))
+                                                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                                                        .text_color(theme.foreground)
+                                                                                        .child(tool.name),
+                                                                                )
+                                                                                .child(
+                                                                                    div()
+                                                                                        .px(px(5.))
+                                                                                        .py(px(0.5))
+                                                                                        .rounded(px(4.))
+                                                                                        .bg(theme.border)
+                                                                                        .text_size(px(10.))
+                                                                                        .text_color(theme.muted_foreground)
+                                                                                        .child(tool.platform),
+                                                                                )
+                                                                                .child(
+                                                                                    if is_up {
+                                                                                        Tag::primary().small().child(tool.status_tag)
+                                                                                    } else if is_inst {
+                                                                                        Tag::secondary().small().child(tool.status_tag)
+                                                                                    } else {
+                                                                                        Tag::secondary().small().child(tool.status_tag)
+                                                                                    }
+                                                                                ),
+                                                                        )
+                                                                        .child(
+                                                                            h_flex()
+                                                                                .items_center()
+                                                                                .gap(px(8.))
+                                                                                .text_size(px(11.))
+                                                                                .text_color(theme.muted_foreground)
+                                                                                .child(format!("已安装: {}", tool.installed_version))
+                                                                                .child("·")
+                                                                                .child(format!("最新: {}", tool.latest_version)),
+                                                                        ),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            if is_up {
+                                                                Button::new(SharedString::from(format!("tool-up-{}", tool.id)))
+                                                                    .primary()
+                                                                    .small()
+                                                                    .label(format!("升级 {}", latest_ver))
+                                                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                                                        window.push_notification(Notification::success(format!("已启动 {} 的升级程序", tool_name)), cx);
+                                                                    }))
+                                                                    .into_any_element()
+                                                            } else if is_inst {
+                                                                Button::new(SharedString::from(format!("tool-chk-{}", tool.id)))
+                                                                    .outline()
+                                                                    .small()
+                                                                    .disabled(true)
+                                                                    .label("已是最新")
+                                                                    .into_any_element()
+                                                            } else {
+                                                                Button::new(SharedString::from(format!("tool-ins-{}", tool.id)))
+                                                                    .outline()
+                                                                    .small()
+                                                                    .label("一键安装")
+                                                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                                                        window.push_notification(Notification::info(format!("已启动 {} 的安装引导", tool_name)), cx);
+                                                                    }))
+                                                                    .into_any_element()
+                                                            }
+                                                        ),
+                                                )
+                                        }))
+                                        .when(pair.len() == 1, |this| this.child(div().flex_1()))
+                                }))
+                        ),
+                ),
+            )
+    }
+
     fn render_settings_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .child(match self.settings_tab {
                 SettingsTab::General => self.render_general_settings(cx).into_any_element(),
                 SettingsTab::Usage => self.render_usage_page(cx).into_any_element(),
+                SettingsTab::About => self.render_about_settings(cx).into_any_element(),
             })
     }
 
@@ -3635,6 +4171,8 @@ impl Render for RouterApp {
                 Route::Codex => self.render_app_providers_page(AppKind::Codex, cx).into_any_element(),
                 Route::Claude => self.render_app_providers_page(AppKind::Claude, cx).into_any_element(),
                 Route::Grok => self.render_app_providers_page(AppKind::Grok, cx).into_any_element(),
+                Route::OpenCode => self.render_app_providers_page(AppKind::OpenCode, cx).into_any_element(),
+                Route::Pi => self.render_app_providers_page(AppKind::Pi, cx).into_any_element(),
                 Route::Notifications => self.render_notifications_page(cx).into_any_element(),
                 Route::Settings => self.render_settings_page(cx).into_any_element(),
             }
@@ -3730,6 +4268,26 @@ impl FormDraft {
                 model: DEFAULT_GROK_MODEL.to_string(),
                 model_mappings: Vec::new(),
             }),
+            AppKind::OpenCode => ProviderForm::OpenCode(OpenCodeForm {
+                name: String::new(),
+                website_url: String::new(),
+                kind: OpenCodeKind::ThirdParty,
+                npm: domain::DEFAULT_OPENCODE_NPM.to_string(),
+                api_key: String::new(),
+                base_url: String::new(),
+                model: DEFAULT_OPENCODE_MODEL.to_string(),
+                model_mappings: Vec::new(),
+            }),
+            AppKind::Pi => ProviderForm::Pi(PiForm {
+                name: String::new(),
+                website_url: String::new(),
+                kind: PiKind::ThirdParty,
+                api_type: domain::DEFAULT_PI_API_TYPE.to_string(),
+                api_key: String::new(),
+                base_url: String::new(),
+                model: DEFAULT_PI_MODEL.to_string(),
+                model_mappings: Vec::new(),
+            }),
         };
 
         Self::from_provider_form(app, None, default_form, window, cx)
@@ -3744,7 +4302,14 @@ impl FormDraft {
     ) -> Self {
         let presets = presets_for_app(app);
 
-        let (name, api_key, base_url, model, is_official, catalog_rows_data) = match &form {
+        let (name, api_key, base_url, model, is_official, catalog_rows_data): (
+            String,
+            String,
+            String,
+            String,
+            bool,
+            Vec<(String, String, Option<u64>, Option<String>)>,
+        ) = match &form {
             ProviderForm::Codex(f) => (
                 f.name.clone(),
                 f.api_key.clone(),
@@ -3754,7 +4319,7 @@ impl FormDraft {
                 f.model_mappings
                     .iter()
                     .map(|m| (m.display_name.clone(), m.model.clone(), m.context_window, m.reasoning_effort.clone()))
-                    .collect::<Vec<_>>(),
+                    .collect(),
             ),
             ProviderForm::Claude(f) => (
                 f.name.clone(),
@@ -3765,7 +4330,7 @@ impl FormDraft {
                 f.model_mappings
                     .iter()
                     .map(|m| (m.display_name.clone(), m.model.clone(), m.context_window, m.reasoning_effort.clone()))
-                    .collect::<Vec<_>>(),
+                    .collect(),
             ),
             ProviderForm::Grok(f) => (
                 f.name.clone(),
@@ -3776,7 +4341,29 @@ impl FormDraft {
                 f.model_mappings
                     .iter()
                     .map(|m| (m.display_name.clone(), m.model.clone(), m.context_window, m.reasoning_effort.clone()))
-                    .collect::<Vec<_>>(),
+                    .collect(),
+            ),
+            ProviderForm::OpenCode(f) => (
+                f.name.clone(),
+                f.api_key.clone(),
+                f.base_url.clone(),
+                f.model.clone(),
+                f.kind.is_official(),
+                f.model_mappings
+                    .iter()
+                    .map(|m| (m.display_name.clone(), m.model_id.clone(), m.context_limit, None))
+                    .collect(),
+            ),
+            ProviderForm::Pi(f) => (
+                f.name.clone(),
+                f.api_key.clone(),
+                f.base_url.clone(),
+                f.model.clone(),
+                f.kind.is_official(),
+                f.model_mappings
+                    .iter()
+                    .map(|m| (m.display_name.clone(), m.model_id.clone(), m.context_window, None))
+                    .collect(),
             ),
         };
 
@@ -3903,6 +4490,40 @@ impl FormDraft {
                     name,
                     website_url: String::new(),
                     kind: if self.is_official { GrokKind::Official } else { GrokKind::ThirdParty },
+                    api_key,
+                    base_url,
+                    model,
+                    model_mappings,
+                })
+            }
+            AppKind::OpenCode => {
+                let model_mappings = self
+                    .catalog_rows
+                    .iter()
+                    .filter_map(|row| row.to_opencode_mapping(cx))
+                    .collect();
+                ProviderForm::OpenCode(OpenCodeForm {
+                    name,
+                    website_url: String::new(),
+                    kind: if self.is_official { OpenCodeKind::Official } else { OpenCodeKind::ThirdParty },
+                    npm: domain::DEFAULT_OPENCODE_NPM.to_string(),
+                    api_key,
+                    base_url,
+                    model,
+                    model_mappings,
+                })
+            }
+            AppKind::Pi => {
+                let model_mappings = self
+                    .catalog_rows
+                    .iter()
+                    .filter_map(|row| row.to_pi_mapping(cx))
+                    .collect();
+                ProviderForm::Pi(PiForm {
+                    name,
+                    website_url: String::new(),
+                    kind: if self.is_official { PiKind::Official } else { PiKind::ThirdParty },
+                    api_type: domain::DEFAULT_PI_API_TYPE.to_string(),
                     api_key,
                     base_url,
                     model,

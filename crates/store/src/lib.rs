@@ -3,8 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use domain::{
-    official_claude_provider, official_codex_provider, official_grok_provider, AppKind, Provider,
-    OFFICIAL_CLAUDE_ID, OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID,
+    official_claude_provider, official_codex_provider, official_grok_provider,
+    official_opencode_provider, official_pi_provider, AppKind, Provider, OFFICIAL_CLAUDE_ID,
+    OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID, OFFICIAL_OPENCODE_ID, OFFICIAL_PI_ID,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,8 @@ pub struct AppSettings {
     pub codex_home: Option<PathBuf>,
     pub claude_home: Option<PathBuf>,
     pub grok_home: Option<PathBuf>,
+    pub opencode_home: Option<PathBuf>,
+    pub pi_home: Option<PathBuf>,
     pub theme: ThemePreference,
     #[serde(default)]
     pub language: AppLanguage,
@@ -52,6 +55,8 @@ fn default_main_apps() -> Vec<String> {
         "claude".into(),
         "claude-desktop".into(),
         "grok".into(),
+        "opencode".into(),
+        "pi".into(),
     ]
 }
 
@@ -73,6 +78,8 @@ impl Default for AppSettings {
             codex_home: None,
             claude_home: None,
             grok_home: None,
+            opencode_home: None,
+            pi_home: None,
             theme: ThemePreference::System,
             language: AppLanguage::ZhCn,
             main_apps: default_main_apps(),
@@ -295,6 +302,18 @@ impl Store {
         // Seed Grok
         if self.get_provider(OFFICIAL_GROK_ID)?.is_none() {
             let mut official = official_grok_provider();
+            official.created_at = now_secs();
+            self.upsert_provider(&official)?;
+        }
+        // Seed OpenCode
+        if self.get_provider(OFFICIAL_OPENCODE_ID)?.is_none() {
+            let mut official = official_opencode_provider();
+            official.created_at = now_secs();
+            self.upsert_provider(&official)?;
+        }
+        // Seed Pi
+        if self.get_provider(OFFICIAL_PI_ID)?.is_none() {
+            let mut official = official_pi_provider();
             official.created_at = now_secs();
             self.upsert_provider(&official)?;
         }

@@ -5,6 +5,8 @@ members = [
     "crates/adapters-codex",
     "crates/adapters-claude",
     "crates/adapters-grok",
+    "crates/adapters-opencode",
+    "crates/adapters-pi",
     "crates/store",
     "crates/session",
     "crates/ui",
@@ -22,6 +24,8 @@ domain = { path = "crates/domain" }
 adapters-codex = { path = "crates/adapters-codex" }
 adapters-claude = { path = "crates/adapters-claude" }
 adapters-grok = { path = "crates/adapters-grok" }
+adapters-opencode = { path = "crates/adapters-opencode" }
+adapters-pi = { path = "crates/adapters-pi" }
 store = { path = "crates/store" }
 session = { path = "crates/session" }
 ui = { path = "crates/ui" }

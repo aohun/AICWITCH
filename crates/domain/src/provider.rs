@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{AppKind, ClaudeSettings, CodexSettings, GrokSettings};
+use crate::{
+    AppKind, ClaudeSettings, CodexSettings, GrokSettings, OpenCodeSettings, PiSettings,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Provider {
@@ -19,6 +21,8 @@ pub enum ProviderSettings {
     Codex(CodexSettings),
     Claude(ClaudeSettings),
     Grok(GrokSettings),
+    OpenCode(OpenCodeSettings),
+    Pi(PiSettings),
     Unsupported { app: AppKind },
 }
 
@@ -44,11 +48,27 @@ impl Provider {
         }
     }
 
+    pub fn opencode_settings(&self) -> Option<&OpenCodeSettings> {
+        match &self.settings {
+            ProviderSettings::OpenCode(settings) => Some(settings),
+            _ => None,
+        }
+    }
+
+    pub fn pi_settings(&self) -> Option<&PiSettings> {
+        match &self.settings {
+            ProviderSettings::Pi(settings) => Some(settings),
+            _ => None,
+        }
+    }
+
     pub fn is_official(&self) -> bool {
         match &self.settings {
             ProviderSettings::Codex(s) => s.kind.is_official(),
             ProviderSettings::Claude(s) => s.kind.is_official(),
             ProviderSettings::Grok(s) => s.kind.is_official(),
+            ProviderSettings::OpenCode(s) => s.kind.is_official(),
+            ProviderSettings::Pi(s) => s.kind.is_official(),
             ProviderSettings::Unsupported { .. } => false,
         }
     }

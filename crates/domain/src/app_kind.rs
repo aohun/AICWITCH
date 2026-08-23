@@ -6,6 +6,8 @@ pub enum AppKind {
     Codex,
     Claude,
     Grok,
+    OpenCode,
+    Pi,
 }
 
 impl AppKind {
@@ -14,6 +16,8 @@ impl AppKind {
             Self::Codex => "codex",
             Self::Claude => "claude",
             Self::Grok => "grok",
+            Self::OpenCode => "opencode",
+            Self::Pi => "pi",
         }
     }
 
@@ -22,6 +26,8 @@ impl AppKind {
             Self::Codex => "Codex",
             Self::Claude => "Claude Code",
             Self::Grok => "Grok Build",
+            Self::OpenCode => "OpenCode",
+            Self::Pi => "Pi",
         }
     }
 
@@ -30,6 +36,8 @@ impl AppKind {
             "codex" => Some(Self::Codex),
             "claude" => Some(Self::Claude),
             "grok" => Some(Self::Grok),
+            "opencode" => Some(Self::OpenCode),
+            "pi" => Some(Self::Pi),
             _ => None,
         }
     }

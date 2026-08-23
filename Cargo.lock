@@ -38,6 +38,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapters-opencode"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "adapters-pi"
+version = "0.1.0"
+dependencies = [
+ "dirs 6.0.0",
+ "domain",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5362,6 +5386,8 @@ dependencies = [
  "adapters-claude",
  "adapters-codex",
  "adapters-grok",
+ "adapters-opencode",
+ "adapters-pi",
  "domain",
  "serde_json",
  "store",

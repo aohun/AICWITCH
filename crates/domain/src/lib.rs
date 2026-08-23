@@ -6,6 +6,8 @@ mod claude;
 mod codex;
 mod error;
 mod grok;
+mod opencode;
+mod pi;
 mod provider;
 
 pub use app_kind::AppKind;
@@ -31,6 +33,18 @@ pub use grok::{
     official_grok_settings, parse_grok_form, GrokForm, GrokKind, GrokModelMapping,
     GrokPreset, GrokSettings, DEFAULT_GROK_MODEL, GROK_PRESETS, OFFICIAL_GROK_ID,
 };
+pub use opencode::{
+    extract_opencode_api_key, extract_opencode_base_url, extract_opencode_model,
+    extract_opencode_options, generate_opencode_provider_json, official_opencode_provider,
+    official_opencode_settings, parse_opencode_form, OpenCodeForm, OpenCodeKind,
+    OpenCodeModelMapping, OpenCodePreset, OpenCodeSettings, DEFAULT_OPENCODE_MODEL,
+    DEFAULT_OPENCODE_NPM, OFFICIAL_OPENCODE_ID, OPENCODE_PRESETS,
+};
+pub use pi::{
+    generate_pi_models_json, generate_pi_settings_json, official_pi_provider,
+    official_pi_settings, parse_pi_form, PiForm, PiKind, PiModelMapping, PiPreset,
+    PiSettings, DEFAULT_PI_API_TYPE, DEFAULT_PI_MODEL, OFFICIAL_PI_ID, PI_PRESETS,
+};
 pub use provider::{new_provider_id, Provider, ProviderSettings};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +52,8 @@ pub enum ProviderForm {
     Codex(CodexForm),
     Claude(ClaudeForm),
     Grok(GrokForm),
+    OpenCode(OpenCodeForm),
+    Pi(PiForm),
 }
 
 #[cfg(test)]
@@ -149,5 +165,72 @@ mod tests {
         assert!(settings.config_toml.contains("base_url = \"https://api.packy.ai/v1\""));
         assert!(settings.config_toml.contains("api_key = \"xai-test-key\""));
         assert!(settings.config_toml.contains("model = \"grok-4.5\""));
+    }
+
+    #[test]
+    fn opencode_config_generation_works() {
+        let form = OpenCodeForm {
+            name: "DeepSeek Provider".into(),
+            website_url: "https://deepseek.com".into(),
+            kind: OpenCodeKind::ThirdParty,
+            npm: "@ai-sdk/openai-compatible".into(),
+            api_key: "sk-ds-123".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            model: "deepseek-chat".into(),
+            model_mappings: vec![OpenCodeModelMapping {
+                model_id: "deepseek-reasoner".into(),
+                display_name: "DeepSeek R1".into(),
+                context_limit: Some(64000),
+                output_limit: Some(8192),
+            }],
+        };
+        let settings = parse_opencode_form(form).unwrap();
+        assert_eq!(settings.kind, OpenCodeKind::ThirdParty);
+        let val = generate_opencode_provider_json(&settings, "DeepSeek Provider");
+        assert_eq!(val["npm"], "@ai-sdk/openai-compatible");
+        assert_eq!(val["options"]["baseURL"], "https://api.deepseek.com/v1");
+        assert_eq!(val["options"]["apiKey"], "sk-ds-123");
+        assert_eq!(val["models"]["deepseek-chat"]["name"], "deepseek-chat");
+        assert_eq!(val["models"]["deepseek-reasoner"]["name"], "DeepSeek R1");
+        assert_eq!(
+            extract_opencode_api_key(&settings.options).as_deref(),
+            Some("sk-ds-123")
+        );
+        assert_eq!(
+            extract_opencode_base_url(&settings.options).as_deref(),
+            Some("https://api.deepseek.com/v1")
+        );
+    }
+
+    #[test]
+    fn pi_config_generation_works() {
+        let form = PiForm {
+            name: "PackyCode Pi".into(),
+            website_url: "https://packyapi.ai".into(),
+            kind: PiKind::ThirdParty,
+            api_type: "openai-completions".into(),
+            api_key: "sk-pk-123".into(),
+            base_url: "https://www.packyapi.ai/v1".into(),
+            model: "gpt-4o".into(),
+            model_mappings: vec![PiModelMapping {
+                model_id: "claude-3-7-sonnet".into(),
+                display_name: "Claude Sonnet".into(),
+                context_window: Some(200000),
+            }],
+        };
+        let settings = parse_pi_form(form).unwrap();
+        assert_eq!(settings.kind, PiKind::ThirdParty);
+        let models_json = generate_pi_models_json(&settings, "packycode");
+        assert_eq!(
+            models_json["providers"]["packycode"]["baseUrl"],
+            "https://www.packyapi.ai/v1"
+        );
+        assert_eq!(
+            models_json["providers"]["packycode"]["apiKey"],
+            "sk-pk-123"
+        );
+        let settings_json = generate_pi_settings_json("packycode", "gpt-4o");
+        assert_eq!(settings_json["defaultProvider"], "packycode");
+        assert_eq!(settings_json["defaultModel"], "gpt-4o");
     }
 }

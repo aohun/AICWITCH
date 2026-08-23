@@ -63,6 +63,12 @@ const ARROW_LEFT_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox=
   <path fill="currentColor" d="M6.238 28c0 .586.258 1.125.727 1.57l15.562 15.54c.492.445.985.656 1.524.656c1.172 0 2.062-.844 2.062-2.016c0-.562-.21-1.125-.586-1.477l-5.226-5.343l-7.922-7.196l5.695.352H47.7c1.219 0 2.063-.867 2.063-2.086s-.844-2.086-2.063-2.086H18.074l-5.672.352l7.899-7.196l5.226-5.343c.399-.376.586-.915.586-1.477c0-1.172-.89-2.016-2.062-2.016c-.54 0-1.055.188-1.57.704L6.964 26.43c-.469.445-.727.984-.727 1.57"/>
 </svg>"#;
 
+const MONITOR_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect width="20" height="14" x="2" y="3" rx="2"/>
+  <line x1="8" x2="16" y1="21" y2="21"/>
+  <line x1="12" x2="12" y1="17" y2="21"/>
+</svg>"#;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CustomIcon {
     OpenAI,
@@ -78,6 +84,7 @@ pub enum CustomIcon {
     OhMyPi,
     RotateCw,
     ArrowLeft,
+    Monitor,
 }
 
 impl IconNamed for CustomIcon {
@@ -96,6 +103,7 @@ impl IconNamed for CustomIcon {
             Self::OhMyPi => "icons/custom/ohmypi.svg",
             Self::RotateCw => "icons/custom/rotate-cw.svg",
             Self::ArrowLeft => "icons/custom/arrow-left.svg",
+            Self::Monitor => "icons/custom/monitor.svg",
         }
         .into()
     }
@@ -117,6 +125,7 @@ impl AssetSource for AppAssets {
             "icons/custom/ohmypi.svg" => Ok(Some(Cow::Borrowed(OHMYPI_SVG.as_bytes()))),
             "icons/custom/rotate-cw.svg" => Ok(Some(Cow::Borrowed(ROTATE_CW_SVG.as_bytes()))),
             "icons/custom/arrow-left.svg" => Ok(Some(Cow::Borrowed(ARROW_LEFT_SVG.as_bytes()))),
+            "icons/custom/monitor.svg" => Ok(Some(Cow::Borrowed(MONITOR_SVG.as_bytes()))),
             _ => gpui_component_assets::Assets.load(path),
         }
     }
@@ -137,6 +146,7 @@ impl AssetSource for AppAssets {
             list.push("icons/custom/ohmypi.svg".into());
             list.push("icons/custom/rotate-cw.svg".into());
             list.push("icons/custom/arrow-left.svg".into());
+            list.push("icons/custom/monitor.svg".into());
         }
         Ok(list)
     }
