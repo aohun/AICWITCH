@@ -285,7 +285,7 @@ impl RouterApp {
 
     fn open_create_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form = Some(FormDraft::create(window, cx));
-        self.present_form(window, cx);
+        cx.notify();
     }
 
     fn open_edit_form(&mut self, provider_id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -297,42 +297,10 @@ impl RouterApp {
                     window,
                     cx,
                 ));
-                self.present_form(window, cx);
+                cx.notify();
             }
             Err(error) => self.fail(error, window, cx),
         }
-    }
-
-    fn present_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let view = cx.entity();
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let view_for_body = view.clone();
-            let title = match view.read(cx).form.as_ref().and_then(|form| form.editing_id.as_ref())
-            {
-                Some(_) => SharedString::from("编辑 Codex 供应商"),
-                None => SharedString::from("新建 Codex 供应商"),
-            };
-            let body = view.read(cx).form_body(view_for_body, cx);
-            dialog
-                .confirm()
-                .title(title)
-                .child(body)
-                .on_ok({
-                    let view = view.clone();
-                    move |_, window, cx| view.update(cx, |this, cx| this.submit_form(window, cx))
-                })
-                .on_cancel({
-                    let view = view.clone();
-                    move |_, _, cx| {
-                        view.update(cx, |this, cx| {
-                            this.form = None;
-                            cx.notify();
-                        });
-                        true
-                    }
-                })
-        });
-        cx.notify();
     }
 
     fn submit_form(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -1479,6 +1447,115 @@ impl RouterApp {
             )
             .into_any_element()
     }
+
+    fn render_form_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(form) = self.form.as_ref() else {
+            return div().into_any_element();
+        };
+
+        let is_editing = form.editing_id.is_some();
+        let title = if is_editing {
+            "编辑 Codex 供应商"
+        } else {
+            "新建 Codex 供应商"
+        };
+        let view = cx.entity();
+        let view_for_body = view.clone();
+        let theme = cx.theme();
+
+        div()
+            .id("form-modal-backdrop")
+            .absolute()
+            .inset_0()
+            .bg(gpui::hsla(0., 0., 0., 0.5))
+            .flex()
+            .items_center()
+            .justify_center()
+            .p(px(20.))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.form = None;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .id("form-modal-container")
+                    .w(px(520.))
+                    .max_h(px(580.))
+                    .bg(theme.background)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded(px(14.))
+                    .shadow_lg()
+                    .p(px(20.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.))
+                    .on_click(|_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(16.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme.foreground)
+                                    .child(title),
+                            )
+                            .child(
+                                Button::new("close-form")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(IconName::Close)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.form = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scrollbar()
+                            .pr(px(4.))
+                            .child(self.form_body(view_for_body, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(10.))
+                            .pt(px(10.))
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .child(
+                                Button::new("cancel-form")
+                                    .outline()
+                                    .small()
+                                    .label("取消")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.form = None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("submit-form")
+                                    .primary()
+                                    .small()
+                                    .label("保存配置")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.submit_form(window, cx);
+                                    })),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for RouterApp {
@@ -1543,6 +1620,9 @@ impl Render for RouterApp {
                     )
                     .child(self.render_chrome(window, cx)),
             )
+            .when(self.form.is_some(), |this| {
+                this.child(self.render_form_modal(cx))
+            })
             .children(gpui_component::Root::render_dialog_layer(window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
             .children(gpui_component::Root::render_notification_layer(window, cx))
