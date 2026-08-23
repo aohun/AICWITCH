@@ -485,6 +485,21 @@ impl RouterApp {
             },
         );
 
+        let supported = ["codex", "claude", "claude-desktop", "grok"];
+        let mut main_apps: Vec<String> = settings
+            .main_apps
+            .into_iter()
+            .filter(|a| supported.contains(&a.as_str()))
+            .collect();
+        if main_apps.is_empty() {
+            main_apps = vec![
+                "codex".into(),
+                "claude".into(),
+                "claude-desktop".into(),
+                "grok".into(),
+            ];
+        }
+
         let mut app = Self {
             workspace,
             providers: Vec::new(),
@@ -494,7 +509,7 @@ impl RouterApp {
             sidebar_open: true,
             theme: settings.theme,
             language: settings.language,
-            main_apps: settings.main_apps,
+            main_apps,
             launch_on_startup: settings.launch_on_startup,
             minimize_to_tray: settings.minimize_to_tray,
             settings_tab: SettingsTab::General,
@@ -1114,7 +1129,7 @@ impl RouterApp {
                     "codex",
                     CustomIcon::OpenAI,
                     Some(rgb(0x10A37F).into()),
-                    "Codex CLI",
+                    "Codex",
                     Route::Codex,
                     Some(format!("{count}")),
                     false,
@@ -2061,7 +2076,7 @@ impl RouterApp {
         let theme_match = query.is_empty()
             || "外观主题 appearance theme 浅色 深色 跟随系统 light dark system 主题".contains(&query);
         let apps_match = query.is_empty()
-            || "主页面显示 main page apps claude codex gemini grok opencode openclaw hermes pi amp cursor deepseek fx kimi ohmypi 侧边栏 导航".contains(&query);
+            || "主页面显示 main page apps claude codex grok 侧边栏 导航".contains(&query);
         let window_match = query.is_empty()
             || "窗口行为 window behavior 开机自启 startup 关闭时最小化到托盘 minimize tray 托盘".contains(&query);
 
@@ -2234,18 +2249,10 @@ impl RouterApp {
                                     .w_full()
                                     .flex_wrap()
                                     .gap(px(8.))
-                                    .child(self.render_app_toggle_chip("amp", "Amp", CustomIcon::Amp, rgb(0xEA580C).into(), cx))
+                                    .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
                                     .child(self.render_app_toggle_chip("claude", "Claude Code", CustomIcon::Claude, rgb(0xD97757).into(), cx))
                                     .child(self.render_app_toggle_chip("claude-desktop", "Claude Desktop", CustomIcon::Claude, rgb(0xD97757).into(), cx))
-                                    .child(self.render_app_toggle_chip("codex", "Codex CLI", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
-                                    .child(self.render_app_toggle_chip("cursor", "Cursor CLI", CustomIcon::Cursor, rgb(0x6366F1).into(), cx))
-                                    .child(self.render_app_toggle_chip("deepseek", "DeepSeek Harness", CustomIcon::DeepSeek, rgb(0x3B82F6).into(), cx))
-                                    .child(self.render_app_toggle_chip("fx", "Fx", CustomIcon::Fx, rgb(0x4B5563).into(), cx))
-                                    .child(self.render_app_toggle_chip("opencode", "OpenCode", CustomIcon::OpenCode, rgb(0x0284C7).into(), cx))
-                                    .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx))
-                                    .child(self.render_app_toggle_chip("kimi", "Kimi Code", CustomIcon::Kimi, rgb(0x2563EB).into(), cx))
-                                    .child(self.render_app_toggle_chip("ohmypi", "Oh My Pi", CustomIcon::OhMyPi, rgb(0xEC4899).into(), cx))
-                                    .child(self.render_app_toggle_chip("pi", "Pi", CustomIcon::Pi, rgb(0x3B82F6).into(), cx)),
+                                    .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx)),
                             ),
                     ),
                 )

@@ -45,6 +45,7 @@ fn default_main_apps() -> Vec<String> {
     vec![
         "codex".into(),
         "claude".into(),
+        "claude-desktop".into(),
         "grok".into(),
     ]
 }

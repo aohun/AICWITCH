@@ -449,9 +449,9 @@ mod tests {
     fn reorder_main_apps_persists() {
         let (dir, ws) = temp_workspace();
         let initial = ws.settings().unwrap().main_apps;
-        assert_eq!(initial, vec!["codex", "claude", "grok"]);
+        assert_eq!(initial, vec!["codex", "claude", "claude-desktop", "grok"]);
 
-        let custom_order = vec!["cursor".to_string(), "codex".to_string(), "claude".to_string()];
+        let custom_order = vec!["codex".to_string(), "grok".to_string(), "claude".to_string()];
         ws.reorder_main_apps(custom_order.clone()).unwrap();
 
         let loaded = ws.settings().unwrap().main_apps;
