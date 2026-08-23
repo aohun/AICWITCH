@@ -9,7 +9,7 @@ use domain::{
     GROK_PRESETS, RESPONSES_PRESETS,
 };
 use gpui::{
-    div, prelude::FluentBuilder, px, rgb, App, AppContext, Context, Entity, FontWeight, Hsla,
+    div, prelude::FluentBuilder, px, rgb, rgba, App, AppContext, Context, Entity, FontWeight, Hsla,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Subscription, Window, WindowControlArea,
 };
@@ -1799,7 +1799,23 @@ impl RouterApp {
             "API Key"
         };
 
-        theme::tile(cx)
+        let dark = cx.theme().is_dark();
+        let card = theme::tile(cx);
+        let card = if is_current {
+            card
+                .border_1()
+                .border_color(if dark { rgb(0x3B82F6) } else { rgb(0x2563EB) })
+                .bg(if dark {
+                    rgba(0x1E3A8A26)
+                } else {
+                    rgba(0xEFF6FFFA)
+                })
+                .shadow_sm()
+        } else {
+            card
+        };
+
+        card
             .child(
                 h_flex()
                     .w_full()
@@ -1823,12 +1839,12 @@ impl RouterApp {
                                             .items_center()
                                             .justify_center()
                                             .bg(if is_current {
-                                                cx.theme().primary
+                                                if dark { rgb(0x3B82F6).into() } else { rgb(0x2563EB).into() }
                                             } else {
                                                 cx.theme().border
                                             })
                                             .text_color(if is_current {
-                                                cx.theme().primary_foreground
+                                                rgb(0xFFFFFF).into()
                                             } else {
                                                 cx.theme().foreground
                                             })
@@ -1846,7 +1862,17 @@ impl RouterApp {
                                             .child(provider.name.clone()),
                                     )
                                     .when(is_current, |this| {
-                                        this.child(Tag::primary().small().child("使用中"))
+                                        this.child(
+                                            div()
+                                                .px(px(6.))
+                                                .py(px(1.))
+                                                .rounded(px(6.))
+                                                .bg(if dark { rgb(0x3B82F6) } else { rgb(0x2563EB) })
+                                                .text_size(px(11.))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(rgb(0xFFFFFF))
+                                                .child("使用中"),
+                                        )
                                     })
                                     .child(
                                         if is_official {
@@ -1949,7 +1975,7 @@ impl RouterApp {
                                     .outline()
                                     .small()
                                     .icon(IconName::Copy)
-                                    .tooltip("复制供应商")
+                                    .label("复制")
                                     .on_click(cx.listener({
                                         let id = id.clone();
                                         move |this, _, window, cx| this.duplicate(&id, window, cx)
@@ -1960,7 +1986,7 @@ impl RouterApp {
                                     .outline()
                                     .small()
                                     .icon(IconName::Delete)
-                                    .tooltip("删除供应商")
+                                    .label("删除")
                                     .disabled(is_current)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.confirm_delete(&id, window, cx)
