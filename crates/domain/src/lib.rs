@@ -8,10 +8,11 @@ mod provider;
 pub use app_kind::AppKind;
 pub use codex::{
     backfill_codex_settings, extract_codex_api_key, extract_codex_base_url, extract_codex_model,
-    extract_codex_provider_name, generate_third_party_auth, generate_third_party_config,
-    has_login_material, official_codex_provider, official_codex_settings, parse_codex_form,
-    CodexForm, CodexKind, CodexPreset, CodexSettings, DEFAULT_CODEX_MODEL, OFFICIAL_CODEX_ID,
-    RESPONSES_PRESETS,
+    extract_codex_provider_name, fetch_models_from_api, generate_catalog_json,
+    generate_third_party_auth, generate_third_party_config,
+    generate_third_party_config_with_catalog, has_login_material, official_codex_provider,
+    official_codex_settings, parse_codex_form, CodexForm, CodexKind, CodexModelMapping,
+    CodexPreset, CodexSettings, DEFAULT_CODEX_MODEL, OFFICIAL_CODEX_ID, RESPONSES_PRESETS,
 };
 pub use error::DomainError;
 pub use provider::{new_provider_id, Provider, ProviderSettings};
@@ -62,6 +63,7 @@ mod tests {
             api_key: String::new(),
             base_url: String::new(),
             model: String::new(),
+            model_mappings: Vec::new(),
         })
         .unwrap_err();
         assert!(matches!(err, DomainError::Validation(_)));
@@ -76,6 +78,7 @@ mod tests {
             api_key: String::new(),
             base_url: String::new(),
             model: String::new(),
+            model_mappings: Vec::new(),
         })
         .unwrap();
         assert_eq!(settings.kind, CodexKind::Official);
@@ -92,6 +95,7 @@ mod tests {
             api_key: "old".into(),
             base_url: "https://old.example/v1".into(),
             model: "old-model".into(),
+            model_mappings: Vec::new(),
         })
         .unwrap();
         let live_auth = json!({"OPENAI_API_KEY": "live-key"});
@@ -103,5 +107,43 @@ mod tests {
             Some("https://live.example/v1")
         );
         assert_eq!(extract_codex_model(&merged.config_toml).as_deref(), Some("live-model"));
+    }
+
+    #[test]
+    fn model_mapping_generates_catalog_json_and_config_link() {
+        let mappings = vec![
+            CodexModelMapping {
+                display_name: "DeepSeek V4".into(),
+                model: "deepseek-v4-flash".into(),
+                context_window: Some(64_000),
+                reasoning_effort: Some("high".into()),
+            },
+            CodexModelMapping {
+                display_name: "".into(),
+                model: "kimi-k2.7".into(),
+                context_window: None,
+                reasoning_effort: None,
+            },
+        ];
+
+        let catalog_json = generate_catalog_json(&mappings).expect("catalog json");
+        assert!(catalog_json.contains("deepseek-v4-flash"));
+        assert!(catalog_json.contains("DeepSeek V4"));
+        assert!(catalog_json.contains("64000"));
+        assert!(catalog_json.contains("\"reasoning_effort\": \"high\""));
+        assert!(catalog_json.contains("kimi-k2.7"));
+
+        let settings = parse_codex_form(CodexForm {
+            name: "MultiModel".into(),
+            website_url: String::new(),
+            kind: CodexKind::ResponsesThirdParty,
+            api_key: "sk-123".into(),
+            base_url: "https://api.example.com/v1".into(),
+            model: "deepseek-v4-flash".into(),
+            model_mappings: mappings,
+        })
+        .unwrap();
+
+        assert!(settings.config_toml.contains("model_catalog_json = \"router-switch-model-catalog.json\""));
     }
 }

@@ -186,6 +186,7 @@ impl Workspace {
             api_key: extract_codex_api_key(&live.auth).unwrap_or_default(),
             base_url,
             model: extract_codex_model(&live.config_toml).unwrap_or_default(),
+            model_mappings: Vec::new(),
         };
         Ok(Some(self.save_form(None, form)?))
     }
@@ -271,6 +272,7 @@ mod tests {
             api_key: key.into(),
             base_url: url.into(),
             model: model.into(),
+            model_mappings: Vec::new(),
         }
     }
 

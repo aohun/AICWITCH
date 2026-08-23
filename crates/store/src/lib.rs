@@ -340,6 +340,7 @@ mod tests {
                     "https://www.packyapi.ai/v1",
                     "gpt-5.6-sol",
                 ),
+                model_mappings: Vec::new(),
             }),
             created_at: 1,
             sort_index: 1,

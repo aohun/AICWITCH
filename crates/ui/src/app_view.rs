@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use domain::{
     extract_codex_api_key, extract_codex_base_url, extract_codex_model, has_login_material,
-    CodexForm, CodexKind, CodexPreset, Provider, RESPONSES_PRESETS,
+    CodexForm, CodexKind, CodexModelMapping, CodexPreset, Provider, RESPONSES_PRESETS,
 };
 use gpui::{
     div, prelude::FluentBuilder, px, rgb, App, AppContext, Context, Entity, FontWeight, Hsla,
@@ -48,38 +48,153 @@ impl SelectItem for PresetSelectItem {
         let is_official = self.preset.kind.is_official();
         h_flex()
             .items_center()
-            .justify_between()
             .w_full()
             .gap(px(8.))
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(if is_official {
-                        IconName::Bot
-                    } else {
-                        IconName::SquareTerminal
-                    })
-                    .child(div().child(self.preset.name)),
-            )
+            .child(if is_official {
+                IconName::Bot
+            } else {
+                IconName::SquareTerminal
+            })
             .child(
                 div()
-                    .text_size(px(11.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child(if is_official {
-                        "OAuth"
-                    } else {
-                        self.preset.model
-                    }),
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(cx.theme().foreground)
+                    .child(self.preset.name),
             )
     }
 
     fn matches(&self, query: &str) -> bool {
         let q = query.to_lowercase();
         self.preset.name.to_lowercase().contains(&q)
-            || self.preset.model.to_lowercase().contains(&q)
             || self.preset.base_url.to_lowercase().contains(&q)
             || self.preset.id.to_lowercase().contains(&q)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReasoningOptionItem {
+    pub label: String,
+    pub value: Option<String>,
+}
+
+impl SelectItem for ReasoningOptionItem {
+    type Value = Option<String>;
+
+    fn title(&self) -> SharedString {
+        self.label.clone().into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.value
+    }
+
+    fn render(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
+            .text_size(px(12.))
+            .text_color(cx.theme().foreground)
+            .child(self.label.clone())
+    }
+}
+
+pub struct CatalogRowDraft {
+    pub display_name: Entity<InputState>,
+    pub model: Entity<InputState>,
+    pub context_window: Entity<InputState>,
+    pub reasoning_effort: Entity<SelectState<Vec<ReasoningOptionItem>>>,
+}
+
+impl CatalogRowDraft {
+    pub fn new(
+        display_name_val: &str,
+        model_val: &str,
+        context_window_val: Option<u64>,
+        reasoning_effort_val: Option<&str>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let display_name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("例如: DeepSeek V4 Flash")
+                .default_value(display_name_val.to_string())
+        });
+        let model = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("例如: deepseek-v4-flash")
+                .default_value(model_val.to_string())
+        });
+        let context_str = context_window_val
+            .map(|n| n.to_string())
+            .unwrap_or_default();
+        let context_window = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("例如: 128000")
+                .default_value(context_str)
+        });
+
+        let options = vec![
+            ReasoningOptionItem {
+                label: "未设置".into(),
+                value: None,
+            },
+            ReasoningOptionItem {
+                label: "low".into(),
+                value: Some("low".into()),
+            },
+            ReasoningOptionItem {
+                label: "medium".into(),
+                value: Some("medium".into()),
+            },
+            ReasoningOptionItem {
+                label: "high".into(),
+                value: Some("high".into()),
+            },
+        ];
+        let selected_idx = match reasoning_effort_val {
+            Some("low") => Some(1),
+            Some("medium") => Some(2),
+            Some("high") => Some(3),
+            _ => Some(0),
+        };
+        let reasoning_effort = cx.new(|cx| {
+            let index_path = selected_idx.map(|i| gpui_component::IndexPath::default().row(i));
+            SelectState::new(options, index_path, window, cx)
+        });
+
+        Self {
+            display_name,
+            model,
+            context_window,
+            reasoning_effort,
+        }
+    }
+
+    pub fn to_mapping(&self, cx: &App) -> Option<CodexModelMapping> {
+        let model_val = self.model.read(cx).value().to_string();
+        let model_trimmed = model_val.trim();
+        if model_trimmed.is_empty() {
+            return None;
+        }
+        let display_name_val = self.display_name.read(cx).value().to_string();
+        let context_str = self.context_window.read(cx).value().to_string();
+        let context_window = context_str.trim().parse::<u64>().ok();
+        let reasoning_effort = self
+            .reasoning_effort
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .flatten();
+
+        Some(CodexModelMapping {
+            display_name: if display_name_val.trim().is_empty() {
+                model_trimmed.to_string()
+            } else {
+                display_name_val.trim().to_string()
+            },
+            model: model_trimmed.to_string(),
+            context_window,
+            reasoning_effort,
+        })
     }
 }
 
@@ -111,11 +226,12 @@ struct FormDraft {
     editing_id: Option<String>,
     kind: CodexKind,
     name: Entity<InputState>,
-    website_url: Entity<InputState>,
     api_key: Entity<InputState>,
     base_url: Entity<InputState>,
     model: Entity<InputState>,
     preset_select: Entity<SelectState<Vec<PresetSelectItem>>>,
+    catalog_rows: Vec<CatalogRowDraft>,
+    is_fetching_models: bool,
     _preset_sub: Option<Subscription>,
 }
 
@@ -339,8 +455,6 @@ impl RouterApp {
         form.kind = preset.kind;
         form.name
             .update(cx, |input, cx| input.set_value(preset.name, window, cx));
-        form.website_url
-            .update(cx, |input, cx| input.set_value(preset.website_url, window, cx));
         form.base_url
             .update(cx, |input, cx| input.set_value(preset.base_url, window, cx));
         form.model
@@ -348,11 +462,119 @@ impl RouterApp {
         cx.notify();
     }
 
-    fn set_form_kind(&mut self, kind: CodexKind, cx: &mut Context<Self>) {
-        if let Some(form) = self.form.as_mut() {
-            form.kind = kind;
+    fn fetch_models_for_form(
+        &mut self,
+        populate_catalog: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(form) = self.form.as_mut() else {
+            return;
+        };
+        let base_url = form.base_url.read(cx).value().to_string();
+        let api_key = form.api_key.read(cx).value().to_string();
+
+        if base_url.trim().is_empty() {
+            window.push_notification(Notification::warning("请先填写 API 端点 (Base URL)"), cx);
+            return;
         }
+
+        form.is_fetching_models = true;
         cx.notify();
+
+        window.push_notification(Notification::info("正在从供应商获取模型列表..."), cx);
+
+        let view = cx.entity().downgrade();
+        window
+            .spawn(cx, move |cx: &mut gpui::AsyncWindowContext| {
+                let mut cx = cx.clone();
+                let base_url = base_url.clone();
+                let api_key = api_key.clone();
+                async move {
+                    let result: Result<Vec<String>, String> = cx
+                        .background_executor()
+                        .spawn(async move { domain::fetch_models_from_api(&base_url, &api_key) })
+                        .await;
+
+                    let _ = cx.update(|window: &mut Window, cx: &mut App| {
+                        let _ = view.update(cx, |this, cx| {
+                            if let Some(form) = this.form.as_mut() {
+                                form.is_fetching_models = false;
+                            }
+                            match result {
+                                Ok(models) => {
+                                    let count = models.len();
+                                    this.logs.push(format!("获取模型列表成功，共 {} 个模型", count));
+                                    window.push_notification(
+                                        Notification::success(format!("获取成功！找到 {} 个可用模型", count)),
+                                        cx,
+                                    );
+
+                                    if let Some(form) = this.form.as_mut() {
+                                        if populate_catalog {
+                                            for m in &models {
+                                                let exists = form
+                                                    .catalog_rows
+                                                    .iter()
+                                                    .any(|r| r.model.read(cx).value().trim() == m.as_str());
+                                                if !exists {
+                                                    form.catalog_rows.push(CatalogRowDraft::new(
+                                                        m,
+                                                        m,
+                                                        Some(128_000),
+                                                        None,
+                                                        window,
+                                                        cx,
+                                                    ));
+                                                }
+                                            }
+                                        } else if let Some(first) = models.first() {
+                                            let current = form.model.read(cx).value().to_string();
+                                            if current.trim().is_empty()
+                                                || current == domain::DEFAULT_CODEX_MODEL
+                                            {
+                                                let first = first.clone();
+                                                form.model.update(cx, |input: &mut InputState, cx| {
+                                                    input.set_value(first, window, cx);
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    this.logs.push(format!("获取模型列表失败: {}", err));
+                                    window.push_notification(Notification::error(err), cx);
+                                }
+                            }
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+    }
+
+    fn add_catalog_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(form) = self.form.as_mut() {
+            form.catalog_rows.push(CatalogRowDraft::new(
+                "",
+                "",
+                Some(128_000),
+                None,
+                window,
+                cx,
+            ));
+            cx.notify();
+        }
+    }
+
+    fn remove_catalog_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(form) = self.form.as_mut() {
+            if index < form.catalog_rows.len() {
+                form.catalog_rows.remove(index);
+                cx.notify();
+            }
+        }
     }
 
     fn set_theme_preference(
@@ -1367,13 +1589,11 @@ impl RouterApp {
             "新建 Codex 供应商"
         };
         let subtitle = if is_editing {
-            "修改供应商的接口端点、模型名称与认证凭证"
+            "修改供应商的接口端点、模型名称与模型映射配置"
         } else {
             "从预设模版快速创建或手动填写第三方 Responses API 供应商"
         };
         let theme = cx.theme();
-        let official = form.kind.is_official();
-        let view = cx.entity();
 
         v_flex()
             .w_full()
@@ -1478,7 +1698,7 @@ impl RouterApp {
                         .child(theme::tile_label("PRESET TEMPLATE / 快速选择预设模版", cx))
                         .child(
                             Select::new(&form.preset_select)
-                                .placeholder("从预设模版快速填充 (如 DeepSeek, Kimi, 阿里百炼...)")
+                                .placeholder("选择预设模版 (如 DeepSeek, Kimi, 阿里百炼, 自定义模板...)")
                                 .search_placeholder("搜索预设模版...")
                                 .cleanable(true),
                         )
@@ -1486,17 +1706,23 @@ impl RouterApp {
                             div()
                                 .text_size(px(12.))
                                 .text_color(theme.muted_foreground)
-                                .child("💡 提示：选择预设模版会自动为您填入官方端点、推荐模型及官网链接。"),
+                                .child("💡 提示：选择预设模版会自动为您填入官方端点及推荐模型。"),
                         ),
                 ),
             )
             .child(
-                // Basic Configuration Card
+                // Basic & API Credentials Card
                 theme::tile(cx).child(
                     v_flex()
                         .w_full()
                         .gap(px(12.))
-                        .child(theme::tile_label("BASIC CONFIGURATION / 基础配置", cx))
+                        .child(theme::tile_label("BASIC & API CREDENTIALS / 基础配置与接口凭证", cx))
+                        .child(form_field("供应商名称", Input::new(&form.name)))
+                        .child(form_field(
+                            "API Key (OPENAI_API_KEY)",
+                            Input::new(&form.api_key).mask_toggle(),
+                        ))
+                        .child(form_field("API 端点 (Base URL)", Input::new(&form.base_url)))
                         .child(
                             v_flex()
                                 .gap(px(6.))
@@ -1505,101 +1731,253 @@ impl RouterApp {
                                         .text_size(px(12.))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.foreground)
-                                        .child("协议类型："),
+                                        .child("模型名称 (Model)"),
                                 )
                                 .child(
                                     h_flex()
+                                        .w_full()
                                         .gap(px(8.))
-                                        .child({
-                                            let view = view.clone();
-                                            Button::new("kind-official")
+                                        .items_center()
+                                        .child(
+                                            div().flex_1().child(Input::new(&form.model))
+                                        )
+                                        .child(
+                                            Button::new("fetch-models-btn")
                                                 .outline()
-                                                .small()
-                                                .label("OpenAI 官方 (ChatGPT OAuth)")
-                                                .selected(official)
-                                                .on_click(move |_, _, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    this.set_form_kind(CodexKind::Official, cx)
-                                                });
-                                            })
-                                    })
-                                    .child({
-                                        let view = view.clone();
-                                        Button::new("kind-third-party")
-                                            .outline()
-                                            .small()
-                                            .label("Responses 第三方 (API Key)")
-                                            .selected(!official)
-                                            .on_click(move |_, _, cx| {
-                                                view.update(cx, |this, cx| {
-                                                    this.set_form_kind(CodexKind::ResponsesThirdParty, cx)
-                                                });
-                                            })
-                                    }),
-                            ),
-                    )
-                    .child(form_field("供应商名称", Input::new(&form.name)))
-                    .child(form_field("供应商官网 (可选)", Input::new(&form.website_url).cleanable(true))),
-            ),
-        )
-        .child(
-            // API Credentials & Endpoint Card
-            theme::tile(cx).child(
-                v_flex()
-                    .w_full()
-                    .gap(px(12.))
-                    .child(theme::tile_label("API CREDENTIALS & ENDPOINT / 接口凭证与模型", cx))
-                    .when(!official, |this| {
-                        this.child(form_field(
-                            "API Key (OPENAI_API_KEY)",
-                            Input::new(&form.api_key).mask_toggle(),
-                        ))
-                        .child(form_field("API 端点 (Base URL)", Input::new(&form.base_url)))
-                        .child(form_field("模型名称 (Model)", Input::new(&form.model)))
-                    })
-                    .child(
-                        if official {
-                            Alert::info(
-                                "form-official-notice",
-                                "官方供应商启用时仅整理 config.toml，不修改 ChatGPT OAuth 凭证。未登录时请在终端运行 codex login。",
-                            )
-                        } else {
+                                                .icon(IconName::ArrowDown)
+                                                .tooltip("从端点获取模型列表并填入推荐模型")
+                                                .disabled(form.is_fetching_models)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.fetch_models_for_form(false, window, cx);
+                                                })),
+                                        ),
+                                ),
+                        )
+                        .child(
                             Alert::info(
                                 "form-custom-notice",
                                 "第三方供应商将以 responses 协议写入 ~/.codex/config.toml 并写入 OPENAI_API_KEY。",
-                            )
-                        },
-                    ),
-            ),
-        )
-        .child(
-            // Bottom Action Buttons
-            h_flex()
-                .w_full()
-                .justify_end()
-                .gap(px(10.))
-                .pt(px(8.))
-                .pb(px(24.))
-                .child(
-                    Button::new("bottom-cancel-btn")
-                        .outline()
-                        .label("取消")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.form = None;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    Button::new("bottom-save-btn")
-                        .primary()
-                        .icon(IconName::Check)
-                        .label("保存供应商配置")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.submit_form(window, cx);
-                        })),
+                            ),
+                        ),
                 ),
-        )
-        .into_any_element()
+            )
+            .child(
+                // Model Mapping Card
+                theme::tile(cx).child(
+                    v_flex()
+                        .w_full()
+                        .gap(px(12.))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    v_flex()
+                                        .gap(px(2.))
+                                        .child(theme::tile_label("MODEL MAPPING / 模型映射 (可选)", cx))
+                                        .child(
+                                            div()
+                                                .text_size(px(12.))
+                                                .text_color(theme.muted_foreground)
+                                                .child("自定义在 Codex 客户端下拉菜单中展示的模型别名、映射到服务商的真实模型、上下文窗口大小及思考等级。"),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap(px(8.))
+                                        .child(
+                                            Button::new("fetch-catalog-btn")
+                                                .outline()
+                                                .small()
+                                                .icon(IconName::ArrowDown)
+                                                .label("获取模型列表")
+                                                .disabled(form.is_fetching_models)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.fetch_models_for_form(true, window, cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("add-mapping-btn")
+                                                .primary()
+                                                .small()
+                                                .icon(IconName::Plus)
+                                                .label("添加模型")
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.add_catalog_row(window, cx);
+                                                })),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            if form.catalog_rows.is_empty() {
+                                v_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_center()
+                                    .py(px(20.))
+                                    .gap(px(6.))
+                                    .rounded(px(8.))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .bg(theme.secondary.opacity(0.3))
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .text_color(theme.muted_foreground)
+                                            .child("暂无模型映射配置"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme.muted_foreground)
+                                            .child("点击上方「获取模型列表」可批量拉取，或点击「添加模型」手动新增"),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                v_flex()
+                                    .w_full()
+                                    .gap(px(6.))
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .items_center()
+                                            .gap(px(10.))
+                                            .px(px(8.))
+                                            .py(px(6.))
+                                            .rounded(px(6.))
+                                            .bg(theme.secondary.opacity(0.6))
+                                            .child(
+                                                div()
+                                                    .w(px(180.))
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(theme.muted_foreground)
+                                                    .child("菜单显示名"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(theme.muted_foreground)
+                                                    .child("实际请求模型"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(110.))
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(theme.muted_foreground)
+                                                    .child("上下文窗口"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(130.))
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(theme.muted_foreground)
+                                                    .child("思考等级"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(36.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(theme.muted_foreground)
+                                                    .child("操作"),
+                                            ),
+                                    )
+                                    .children(
+                                        form.catalog_rows.iter().enumerate().map(|(idx, row)| {
+                                            h_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .gap(px(10.))
+                                                .px(px(4.))
+                                                .py(px(3.))
+                                                .child(
+                                                    div()
+                                                        .w(px(180.))
+                                                        .child(Input::new(&row.display_name).small().cleanable(true)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .child(Input::new(&row.model).small().cleanable(true)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(110.))
+                                                        .child(Input::new(&row.context_window).small()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(130.))
+                                                        .child(Select::new(&row.reasoning_effort).small()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(36.))
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .child(
+                                                            Button::new(SharedString::from(format!("del-row-{}", idx)))
+                                                                .ghost()
+                                                                .small()
+                                                                .icon(IconName::Delete)
+                                                                .tooltip("删除此模型映射")
+                                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                                    this.remove_catalog_row(idx, cx);
+                                                                })),
+                                                        ),
+                                                )
+                                        }),
+                                    )
+                                    .into_any_element()
+                            },
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(theme.muted_foreground)
+                                .child("💡 提示：配置模型映射后，将生成 ~/.codex/router-switch-model-catalog.json，在 Codex 侧边栏/设置中可直接切换已配置的模型。"),
+                        ),
+                ),
+            )
+            .child(
+                // Bottom Action Buttons
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap(px(10.))
+                    .pt(px(8.))
+                    .pb(px(24.))
+                    .child(
+                        Button::new("bottom-cancel-btn")
+                            .outline()
+                            .label("取消")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.form = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("bottom-save-btn")
+                            .primary()
+                            .icon(IconName::Check)
+                            .label("保存供应商配置")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit_form(window, cx);
+                            })),
+                    ),
+            )
+            .into_any_element()
     }
 }
 
@@ -1677,6 +2055,17 @@ impl Render for RouterApp {
 
 impl FormDraft {
     fn create(window: &mut Window, cx: &mut Context<RouterApp>) -> Self {
+        let custom_preset = RESPONSES_PRESETS
+            .iter()
+            .find(|p| p.id == "custom")
+            .copied();
+        let default_base_url = custom_preset
+            .map(|p| p.base_url)
+            .unwrap_or("https://api.example.com/v1");
+        let default_model = custom_preset
+            .map(|p| p.model)
+            .unwrap_or(domain::DEFAULT_CODEX_MODEL);
+
         Self::from_codex_form(
             None,
             CodexForm {
@@ -1684,8 +2073,9 @@ impl FormDraft {
                 website_url: String::new(),
                 kind: CodexKind::ResponsesThirdParty,
                 api_key: String::new(),
-                base_url: "https://api.example.com/v1".into(),
-                model: domain::DEFAULT_CODEX_MODEL.into(),
+                base_url: default_base_url.into(),
+                model: default_model.into(),
+                model_mappings: Vec::new(),
             },
             window,
             cx,
@@ -1704,7 +2094,12 @@ impl FormDraft {
             .map(|p| PresetSelectItem { preset: p })
             .collect();
 
-        let selected_index = if form.name.trim().is_empty() {
+        let selected_index = if editing_id.is_none() {
+            RESPONSES_PRESETS
+                .iter()
+                .position(|p| p.id == "custom")
+                .map(|idx| gpui_component::IndexPath::default().row(idx))
+        } else if form.name.trim().is_empty() {
             None
         } else {
             RESPONSES_PRESETS
@@ -1732,11 +2127,25 @@ impl FormDraft {
             },
         );
 
+        let catalog_rows = form
+            .model_mappings
+            .iter()
+            .map(|m| {
+                CatalogRowDraft::new(
+                    &m.display_name,
+                    &m.model,
+                    m.context_window,
+                    m.reasoning_effort.as_deref(),
+                    window,
+                    cx,
+                )
+            })
+            .collect();
+
         Self {
             editing_id,
             kind: form.kind,
             name: field(window, cx, &form.name, "输入供应商名称，如 PackyCode"),
-            website_url: field(window, cx, &form.website_url, "https://..."),
             api_key: cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder("sk-...")
@@ -1746,18 +2155,27 @@ impl FormDraft {
             base_url: field(window, cx, &form.base_url, "https://api.example.com/v1"),
             model: field(window, cx, &form.model, "gpt-5.6-sol"),
             preset_select,
+            catalog_rows,
+            is_fetching_models: false,
             _preset_sub: Some(_preset_sub),
         }
     }
 
     fn to_codex_form(&self, cx: &App) -> CodexForm {
+        let model_mappings = self
+            .catalog_rows
+            .iter()
+            .filter_map(|row| row.to_mapping(cx))
+            .collect();
+
         CodexForm {
             name: self.name.read(cx).value().to_string(),
-            website_url: self.website_url.read(cx).value().to_string(),
-            kind: self.kind,
+            website_url: String::new(),
+            kind: CodexKind::ResponsesThirdParty,
             api_key: self.api_key.read(cx).value().to_string(),
             base_url: self.base_url.read(cx).value().to_string(),
             model: self.model.read(cx).value().to_string(),
+            model_mappings,
         }
     }
 }

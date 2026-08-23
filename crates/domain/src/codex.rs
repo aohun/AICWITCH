@@ -21,11 +21,21 @@ impl CodexKind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexModelMapping {
+    pub display_name: String,
+    pub model: String,
+    pub context_window: Option<u64>,
+    pub reasoning_effort: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodexSettings {
     pub kind: CodexKind,
     pub auth: Value,
     pub config_toml: String,
+    #[serde(default)]
+    pub model_mappings: Vec<CodexModelMapping>,
 }
 
 impl CodexSettings {
@@ -37,6 +47,7 @@ impl CodexSettings {
             api_key: extract_codex_api_key(&self.auth).unwrap_or_default(),
             base_url: extract_codex_base_url(&self.config_toml).unwrap_or_default(),
             model: extract_codex_model(&self.config_toml).unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string()),
+            model_mappings: self.model_mappings.clone(),
         }
     }
 }
@@ -49,6 +60,7 @@ pub struct CodexForm {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    pub model_mappings: Vec<CodexModelMapping>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +226,7 @@ pub fn official_codex_settings() -> CodexSettings {
         kind: CodexKind::Official,
         auth: json!({}),
         config_toml: String::new(),
+        model_mappings: Vec::new(),
     }
 }
 
@@ -233,12 +246,61 @@ pub fn generate_third_party_auth(api_key: &str) -> Value {
     json!({ "OPENAI_API_KEY": api_key })
 }
 
+pub fn generate_catalog_json(mappings: &[CodexModelMapping]) -> Option<String> {
+    if mappings.is_empty() {
+        return None;
+    }
+    let models: Vec<Value> = mappings
+        .iter()
+        .map(|m| {
+            let context = m.context_window.unwrap_or(128_000);
+            let display_name = if m.display_name.trim().is_empty() {
+                &m.model
+            } else {
+                &m.display_name
+            };
+            let mut obj = json!({
+                "slug": m.model,
+                "display_name": display_name,
+                "description": display_name,
+                "context_window": context,
+                "max_context_window": context,
+                "supports_reasoning_summaries": true,
+            });
+            if let Some(effort) = &m.reasoning_effort {
+                let effort_trimmed = effort.trim();
+                if !effort_trimmed.is_empty() && effort_trimmed != "未设置" {
+                    obj["reasoning_effort"] = json!(effort_trimmed);
+                }
+            }
+            obj
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&json!({ "models": models })).ok()
+}
+
 pub fn generate_third_party_config(provider_name: &str, base_url: &str, model: &str) -> String {
+    generate_third_party_config_with_catalog(provider_name, base_url, model, false)
+}
+
+pub fn generate_third_party_config_with_catalog(
+    provider_name: &str,
+    base_url: &str,
+    model: &str,
+    has_catalog: bool,
+) -> String {
+    let catalog_line = if has_catalog {
+        "model_catalog_json = \"router-switch-model-catalog.json\"\n"
+    } else {
+        ""
+    };
     format!(
         "model_provider = {provider_id}\n\
          model = {model}\n\
          model_reasoning_effort = \"high\"\n\
          disable_response_storage = true\n\
+         {catalog_line}\
          \n\
          [model_providers.{table}]\n\
          name = {name}\n\
@@ -247,10 +309,79 @@ pub fn generate_third_party_config(provider_name: &str, base_url: &str, model: &
          requires_openai_auth = true\n",
         provider_id = toml_string(THIRD_PARTY_PROVIDER_ID),
         model = toml_string(model),
+        catalog_line = catalog_line,
         table = THIRD_PARTY_PROVIDER_ID,
         name = toml_string(provider_name),
         base_url = toml_string(base_url),
     )
+}
+
+pub fn fetch_models_from_api(base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+    let trimmed_base = base_url.trim().trim_end_matches('/');
+    if trimmed_base.is_empty() {
+        return Err("API 端点为空".into());
+    }
+
+    let candidate_urls = if trimmed_base.ends_with("/v1") {
+        vec![
+            format!("{trimmed_base}/models"),
+            format!("{trimmed_base}/v1/models"),
+        ]
+    } else {
+        vec![
+            format!("{trimmed_base}/v1/models"),
+            format!("{trimmed_base}/models"),
+        ]
+    };
+
+    let mut last_error = String::new();
+    for url in candidate_urls {
+        let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(8));
+        let trimmed_key = api_key.trim();
+        if !trimmed_key.is_empty() {
+            req = req.set("Authorization", &format!("Bearer {trimmed_key}"));
+        }
+        match req.call() {
+            Ok(resp) => {
+                if let Ok(json_val) = resp.into_json::<Value>() {
+                    let mut models = Vec::new();
+                    if let Some(arr) = json_val.get("data").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                                models.push(id.to_string());
+                            }
+                        }
+                    } else if let Some(arr) = json_val.get("models").and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()).or_else(|| item.as_str()) {
+                                models.push(id.to_string());
+                            }
+                        }
+                    } else if let Some(arr) = json_val.as_array() {
+                        for item in arr {
+                            if let Some(id) = item.get("id").and_then(|v| v.as_str()).or_else(|| item.as_str()) {
+                                models.push(id.to_string());
+                            }
+                        }
+                    }
+                    if !models.is_empty() {
+                        models.sort();
+                        models.dedup();
+                        return Ok(models);
+                    }
+                }
+            }
+            Err(e) => {
+                last_error = e.to_string();
+            }
+        }
+    }
+
+    if last_error.is_empty() {
+        Err("供应商未返回可用模型列表或响应格式不兼容".into())
+    } else {
+        Err(format!("请求模型列表失败: {last_error}"))
+    }
 }
 
 pub fn parse_codex_form(form: CodexForm) -> Result<CodexSettings, DomainError> {
@@ -274,10 +405,17 @@ pub fn parse_codex_form(form: CodexForm) -> Result<CodexSettings, DomainError> {
             if model.is_empty() {
                 return Err(DomainError::validation("第三方供应商需要模型名"));
             }
+            let has_catalog = !form.model_mappings.is_empty();
             Ok(CodexSettings {
                 kind: CodexKind::ResponsesThirdParty,
                 auth: generate_third_party_auth(api_key),
-                config_toml: generate_third_party_config(name, base_url, model),
+                config_toml: generate_third_party_config_with_catalog(
+                    name,
+                    base_url,
+                    model,
+                    has_catalog,
+                ),
+                model_mappings: form.model_mappings,
             })
         }
     }

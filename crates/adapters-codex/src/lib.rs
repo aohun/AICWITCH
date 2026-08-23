@@ -5,7 +5,7 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use domain::{
-    has_login_material, CodexKind, CodexSettings,
+    generate_catalog_json, has_login_material, CodexKind, CodexSettings,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -25,6 +25,7 @@ pub struct CodexPaths {
     pub home: PathBuf,
     pub auth: PathBuf,
     pub config: PathBuf,
+    pub catalog: PathBuf,
 }
 
 impl CodexPaths {
@@ -33,6 +34,7 @@ impl CodexPaths {
         Self {
             auth: home.join("auth.json"),
             config: home.join("config.toml"),
+            catalog: home.join("router-switch-model-catalog.json"),
             home,
         }
     }
@@ -80,6 +82,13 @@ pub fn write_live_for_provider(
     settings: &CodexSettings,
 ) -> Result<(), CodexAdapterError> {
     fs::create_dir_all(&paths.home)?;
+    // Write or remove router-switch-model-catalog.json
+    if let Some(catalog_json) = generate_catalog_json(&settings.model_mappings) {
+        write_text_atomic(&paths.catalog, &catalog_json)?;
+    } else if paths.catalog.exists() {
+        let _ = fs::remove_file(&paths.catalog);
+    }
+
     match settings.kind {
         CodexKind::Official => {
             write_text_atomic(&paths.config, &settings.config_toml)?;
@@ -197,6 +206,7 @@ mod tests {
                 "https://www.packyapi.ai/v1",
                 "gpt-5.6-sol",
             ),
+            model_mappings: Vec::new(),
         }
     }
 
