@@ -8,6 +8,7 @@ use domain::{
     OpenCodeForm, OpenCodeKind, OpenCodeModelMapping,
     PiForm, PiKind, PiModelMapping,
     Provider, ProviderForm, ProviderSettings,
+    ToolEnvironmentStatus,
     CLAUDE_PRESETS, DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GROK_MODEL,
     DEFAULT_OPENCODE_MODEL, DEFAULT_PI_MODEL,
     GROK_PRESETS, OPENCODE_PRESETS, PI_PRESETS, RESPONSES_PRESETS,
@@ -594,6 +595,8 @@ pub struct RouterApp {
     last_error: Option<SharedString>,
     form: Option<FormDraft>,
     logs: Vec<String>,
+    env_tools: Vec<ToolEnvironmentStatus>,
+    is_inspecting_env: bool,
 }
 
 struct FormDraft {
@@ -685,6 +688,8 @@ impl RouterApp {
             ];
         }
 
+        let env_tools = workspace.inspect_environment(false);
+
         let mut app = Self {
             workspace,
             providers: Vec::new(),
@@ -707,8 +712,31 @@ impl RouterApp {
             last_error: None,
             form: None,
             logs: vec!["应用已启动并加载工作区".into()],
+            env_tools,
+            is_inspecting_env: true,
         };
         app.reload();
+
+        let view = cx.entity().downgrade();
+        window
+            .spawn(cx, move |cx: &mut gpui::AsyncWindowContext| {
+                let mut cx = cx.clone();
+                async move {
+                    let updated_tools = cx
+                        .background_executor()
+                        .spawn(async move { domain::inspect_all_tools(true) })
+                        .await;
+                    let _ = cx.update(|_window: &mut Window, cx: &mut App| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.env_tools = updated_tools;
+                            this.is_inspecting_env = false;
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+
         app
     }
 
@@ -838,6 +866,100 @@ impl RouterApp {
         self.logs.push(msg.into());
         notify_success(msg, window, cx);
         cx.notify();
+    }
+
+    fn refresh_env(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.is_inspecting_env = true;
+        self.env_tools = self.workspace.inspect_environment(false);
+        cx.notify();
+        window.push_notification(Notification::info("正在检测本地环境并查询最新版本..."), cx);
+
+        let view = cx.entity().downgrade();
+        window
+            .spawn(cx, move |cx: &mut gpui::AsyncWindowContext| {
+                let mut cx = cx.clone();
+                async move {
+                    let updated_tools = cx
+                        .background_executor()
+                        .spawn(async move { domain::inspect_all_tools(true) })
+                        .await;
+                    let _ = cx.update(|window: &mut Window, cx: &mut App| {
+                        let _ = view.update(cx, |this, cx| {
+                            this.env_tools = updated_tools;
+                            this.is_inspecting_env = false;
+                            window.push_notification(
+                                Notification::success("本地 CLI 环境及最新版本检测完成"),
+                                cx,
+                            );
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+    }
+
+    fn diagnose_all_conflicts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let conflict_count = self.env_tools.iter().filter(|t| t.has_conflicts).count();
+        if conflict_count > 0 {
+            let names = self
+                .env_tools
+                .iter()
+                .filter(|t| t.has_conflicts)
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>()
+                .join("、");
+            window.push_notification(
+                Notification::warning(format!(
+                    "诊断发现 {} 处工具存在多重安装（{}），命令行默认将采用标为「默认」的路径。",
+                    conflict_count, names
+                )),
+                cx,
+            );
+        } else {
+            window.push_notification(
+                Notification::success("环境诊断完成：未检测到多重安装冲突"),
+                cx,
+            );
+        }
+    }
+
+    fn run_tool_upgrade(&mut self, tool_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (cmd_desc, tool_name) = match tool_id {
+            "claude" => ("npm i -g @anthropic-ai/claude-code@latest", "Claude Code"),
+            "codex" => ("npm i -g @openai/codex@latest", "Codex"),
+            "gemini" => ("npm i -g @google/gemini-cli@latest", "Gemini CLI"),
+            "grok" => ("npm i -g @xai-official/grok@latest", "Grok Build"),
+            "opencode" => ("npm i -g opencode-ai@latest", "OpenCode"),
+            "pi" => ("npm i -g @earendil-works/pi-coding-agent@latest", "Pi"),
+            "openclaw" => ("npm i -g openclaw@latest", "OpenClaw"),
+            "hermes" => ("pip install -U hermes-agent", "Hermes"),
+            _ => ("npm i -g latest", tool_id),
+        };
+        self.logs.push(format!("启动升级 {}: {}", tool_name, cmd_desc));
+        window.push_notification(
+            Notification::info(format!("已触发 {} 升级指令: {}", tool_name, cmd_desc)),
+            cx,
+        );
+    }
+
+    fn run_tool_install(&mut self, tool_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (cmd_desc, tool_name) = match tool_id {
+            "claude" => ("npm i -g @anthropic-ai/claude-code", "Claude Code"),
+            "codex" => ("npm i -g @openai/codex", "Codex"),
+            "gemini" => ("npm i -g @google/gemini-cli", "Gemini CLI"),
+            "grok" => ("npm i -g @xai-official/grok", "Grok Build"),
+            "opencode" => ("npm i -g opencode-ai", "OpenCode"),
+            "pi" => ("npm i -g @earendil-works/pi-coding-agent", "Pi"),
+            "openclaw" => ("npm i -g openclaw", "OpenClaw"),
+            "hermes" => ("pip install hermes-agent", "Hermes"),
+            _ => ("npm i -g", tool_id),
+        };
+        self.logs.push(format!("触发安装 {}: {}", tool_name, cmd_desc));
+        window.push_notification(
+            Notification::info(format!("已提供 {} 安装指令: {}", tool_name, cmd_desc)),
+            cx,
+        );
     }
 
     fn enable(&mut self, provider_id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -3267,119 +3389,21 @@ impl RouterApp {
         let is_en = self.language == AppLanguage::En;
         let theme = cx.theme().clone();
 
-        struct CliToolStatus {
-            id: &'static str,
-            name: &'static str,
-            icon: CustomIcon,
-            icon_color: Hsla,
-            platform: &'static str,
-            installed_version: &'static str,
-            latest_version: &'static str,
-            status_tag: &'static str,
-            is_upgradable: bool,
-            is_installed: bool,
+        fn tool_icon_and_color(icon_kind: &str) -> (CustomIcon, Hsla) {
+            match icon_kind {
+                "claude" => (CustomIcon::Claude, rgb(0xD97757).into()),
+                "codex" => (CustomIcon::OpenAI, rgb(0x10A37F).into()),
+                "gemini" => (CustomIcon::DeepSeek, rgb(0x3B82F6).into()),
+                "grok" => (CustomIcon::Grok, rgb(0x8B5CF6).into()),
+                "opencode" => (CustomIcon::OpenCode, rgb(0x0284C7).into()),
+                "pi" => (CustomIcon::Pi, rgb(0x3B82F6).into()),
+                "openclaw" => (CustomIcon::OhMyPi, rgb(0xEC4899).into()),
+                "hermes" => (CustomIcon::Fx, rgb(0x4B5563).into()),
+                _ => (CustomIcon::OpenAI, rgb(0x10A37F).into()),
+            }
         }
 
-        let tools = vec![
-            CliToolStatus {
-                id: "claude-code",
-                name: "Claude Code",
-                icon: CustomIcon::Claude,
-                icon_color: rgb(0xD97757).into(),
-                platform: "macOS",
-                installed_version: "v1.0.8",
-                latest_version: "v1.0.8",
-                status_tag: "已就绪",
-                is_upgradable: false,
-                is_installed: true,
-            },
-            CliToolStatus {
-                id: "codex",
-                name: "Codex",
-                icon: CustomIcon::OpenAI,
-                icon_color: rgb(0x10A37F).into(),
-                platform: "macOS",
-                installed_version: "v0.1.0",
-                latest_version: "v0.1.4",
-                status_tag: "可升级",
-                is_upgradable: true,
-                is_installed: true,
-            },
-            CliToolStatus {
-                id: "gemini-cli",
-                name: "Gemini CLI",
-                icon: CustomIcon::DeepSeek,
-                icon_color: rgb(0x3B82F6).into(),
-                platform: "macOS",
-                installed_version: "v0.2.2",
-                latest_version: "v0.2.2",
-                status_tag: "已就绪",
-                is_upgradable: false,
-                is_installed: true,
-            },
-            CliToolStatus {
-                id: "grok-build",
-                name: "Grok Build",
-                icon: CustomIcon::Grok,
-                icon_color: rgb(0x8B5CF6).into(),
-                platform: "macOS",
-                installed_version: "v0.3.1",
-                latest_version: "v0.3.5",
-                status_tag: "可升级",
-                is_upgradable: true,
-                is_installed: true,
-            },
-            CliToolStatus {
-                id: "opencode",
-                name: "OpenCode",
-                icon: CustomIcon::OpenCode,
-                icon_color: rgb(0x0284C7).into(),
-                platform: "macOS",
-                installed_version: "v1.1.2",
-                latest_version: "v1.1.2",
-                status_tag: "已就绪",
-                is_upgradable: false,
-                is_installed: true,
-            },
-            CliToolStatus {
-                id: "openclaw",
-                name: "OpenClaw",
-                icon: CustomIcon::OhMyPi,
-                icon_color: rgb(0xEC4899).into(),
-                platform: "macOS",
-                installed_version: "-",
-                latest_version: "v0.9.0",
-                status_tag: "未安装",
-                is_upgradable: false,
-                is_installed: false,
-            },
-            CliToolStatus {
-                id: "hermes",
-                name: "Hermes",
-                icon: CustomIcon::Fx,
-                icon_color: rgb(0x4B5563).into(),
-                platform: "macOS",
-                installed_version: "v2.0.1",
-                latest_version: "v2.0.1",
-                status_tag: "已就绪",
-                is_upgradable: false,
-                is_installed: true,
-            },
-            CliToolStatus {
-                id: "pi",
-                name: "Pi",
-                icon: CustomIcon::Pi,
-                icon_color: rgb(0x3B82F6).into(),
-                platform: "macOS",
-                installed_version: "v0.5.0",
-                latest_version: "v0.5.2",
-                status_tag: "可升级",
-                is_upgradable: true,
-                is_installed: true,
-            },
-        ];
-
-        let upgradable_count = tools.iter().filter(|t| t.is_upgradable).count();
+        let upgradable_count = self.env_tools.iter().filter(|t| t.is_upgradable).count();
 
         v_flex()
             .w_full()
@@ -3512,9 +3536,9 @@ impl RouterApp {
                                                 .text_size(px(12.))
                                                 .text_color(theme.muted_foreground)
                                                 .child(if is_en {
-                                                    "Check installed AI CLI tools and version statuses on your system."
+                                                    "Check installed AI CLI tools, latest registry versions, and installation conflicts."
                                                 } else {
-                                                    "检测本机已安装的 AI CLI 工具及其版本状态，支持一键诊断冲突与升级。"
+                                                    "检测本机已安装的 AI CLI 工具版本状态，支持多路径冲突诊断与一键升级。"
                                                 }),
                                         ),
                                 )
@@ -3528,8 +3552,8 @@ impl RouterApp {
                                                 .small()
                                                 .icon(IconName::TriangleAlert)
                                                 .label(if is_en { "Diagnose Conflicts" } else { "诊断安装冲突" })
-                                                .on_click(cx.listener(|_, _, window, cx| {
-                                                    window.push_notification(Notification::success("环境诊断完成：未发现安装冲突或二进制路径覆盖"), cx);
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.diagnose_all_conflicts(window, cx);
                                                 })),
                                         )
                                         .child(
@@ -3538,8 +3562,8 @@ impl RouterApp {
                                                 .small()
                                                 .icon(CustomIcon::RotateCw)
                                                 .label(if is_en { "Refresh" } else { "刷新" })
-                                                .on_click(cx.listener(|_, _, window, cx| {
-                                                    window.push_notification(Notification::info("已刷新本地 CLI 环境检查列表"), cx);
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.refresh_env(window, cx);
                                                 })),
                                         )
                                         .child(
@@ -3548,8 +3572,17 @@ impl RouterApp {
                                                 .small()
                                                 .icon(IconName::ArrowUp)
                                                 .label(format!("全部升级 ({})", upgradable_count))
-                                                .on_click(cx.listener(move |_, _, window, cx| {
-                                                    window.push_notification(Notification::success("已启动全部可升级 CLI 工具的后台更新"), cx);
+                                                .disabled(upgradable_count == 0)
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    let upgradable_ids: Vec<String> = this
+                                                        .env_tools
+                                                        .iter()
+                                                        .filter(|t| t.is_upgradable)
+                                                        .map(|t| t.id.clone())
+                                                        .collect();
+                                                    for tid in upgradable_ids {
+                                                        this.run_tool_upgrade(&tid, window, cx);
+                                                    }
                                                 })),
                                         ),
                                 ),
@@ -3559,24 +3592,49 @@ impl RouterApp {
                             v_flex()
                                 .w_full()
                                 .gap(px(10.))
-                                .children(tools.chunks(2).map(|pair| {
+                                .children(self.env_tools.chunks(2).map(|pair| {
                                     h_flex()
                                         .w_full()
                                         .gap(px(10.))
                                         .children(pair.iter().map(|tool| {
-                                            let tool_name = tool.name;
+                                            let (icon, icon_color) = tool_icon_and_color(&tool.icon_kind);
+                                            let tool_id = tool.id.clone();
+                                            let tool_name = tool.name.clone();
                                             let is_up = tool.is_upgradable;
                                             let is_inst = tool.is_installed;
-                                            let latest_ver = tool.latest_version;
+                                            let is_broken = tool.installed_but_broken;
+                                            let has_conflict = tool.has_conflicts;
+
+                                            let current_ver_display = tool
+                                                .current_version
+                                                .clone()
+                                                .unwrap_or_else(|| if is_broken { "无法运行".into() } else { "未安装".into() });
+
+                                            let latest_ver_display = tool
+                                                .latest_version
+                                                .clone()
+                                                .unwrap_or_else(|| if self.is_inspecting_env { "检测中...".into() } else { "未知".into() });
+
+                                            let status_tag_text = if is_up {
+                                                "可升级"
+                                            } else if is_broken {
+                                                "无法运行"
+                                            } else if is_inst {
+                                                "已就绪"
+                                            } else {
+                                                "未安装"
+                                            };
 
                                             div()
                                                 .flex_1()
-                                                .p(px(12.))
+                                                .p(px(14.))
                                                 .rounded(px(10.))
                                                 .bg(theme.secondary.opacity(0.35))
                                                 .border_1()
-                                                .border_color(theme.border)
+                                                .border_color(if has_conflict { Hsla::from(rgb(0xF59E0B)).opacity(0.4) } else { theme.border })
+                                                .gap(px(10.))
                                                 .child(
+                                                    // Card Header
                                                     h_flex()
                                                         .w_full()
                                                         .items_center()
@@ -3593,11 +3651,7 @@ impl RouterApp {
                                                                         .flex()
                                                                         .items_center()
                                                                         .justify_center()
-                                                                        .child(
-                                                                            Icon::new(tool.icon)
-                                                                                .size(px(18.))
-                                                                                .text_color(tool.icon_color),
-                                                                        ),
+                                                                        .child(Icon::new(icon).size(px(18.)).text_color(icon_color)),
                                                                 )
                                                                 .child(
                                                                     v_flex()
@@ -3611,7 +3665,7 @@ impl RouterApp {
                                                                                         .text_size(px(14.))
                                                                                         .font_weight(FontWeight::SEMIBOLD)
                                                                                         .text_color(theme.foreground)
-                                                                                        .child(tool.name),
+                                                                                        .child(tool_name.clone()),
                                                                                 )
                                                                                 .child(
                                                                                     div()
@@ -3621,58 +3675,177 @@ impl RouterApp {
                                                                                         .bg(theme.border)
                                                                                         .text_size(px(10.))
                                                                                         .text_color(theme.muted_foreground)
-                                                                                        .child(tool.platform),
-                                                                                )
-                                                                                .child(
-                                                                                    if is_up {
-                                                                                        Tag::primary().small().child(tool.status_tag)
-                                                                                    } else if is_inst {
-                                                                                        Tag::secondary().small().child(tool.status_tag)
-                                                                                    } else {
-                                                                                        Tag::secondary().small().child(tool.status_tag)
-                                                                                    }
+                                                                                        .child(tool.platform.clone()),
                                                                                 ),
-                                                                        )
-                                                                        .child(
-                                                                            h_flex()
-                                                                                .items_center()
-                                                                                .gap(px(8.))
-                                                                                .text_size(px(11.))
-                                                                                .text_color(theme.muted_foreground)
-                                                                                .child(format!("已安装: {}", tool.installed_version))
-                                                                                .child("·")
-                                                                                .child(format!("最新: {}", tool.latest_version)),
                                                                         ),
                                                                 ),
                                                         )
                                                         .child(
                                                             if is_up {
-                                                                Button::new(SharedString::from(format!("tool-up-{}", tool.id)))
+                                                                Tag::primary().small().child(status_tag_text)
+                                                            } else if is_broken {
+                                                                Tag::danger().small().child(status_tag_text)
+                                                            } else {
+                                                                Tag::secondary().small().child(status_tag_text)
+                                                            }
+                                                        ),
+                                                )
+                                                .child(
+                                                    // Version details rows
+                                                    v_flex()
+                                                        .w_full()
+                                                        .gap(px(4.))
+                                                        .child(
+                                                            h_flex()
+                                                                .w_full()
+                                                                .items_center()
+                                                                .justify_between()
+                                                                .text_size(px(12.))
+                                                                .child(div().text_color(theme.muted_foreground).child(if is_en { "Current Version" } else { "当前版本" }))
+                                                                .child(div().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(current_ver_display)),
+                                                        )
+                                                        .child(
+                                                            h_flex()
+                                                                .w_full()
+                                                                .items_center()
+                                                                .justify_between()
+                                                                .text_size(px(12.))
+                                                                .child(div().text_color(theme.muted_foreground).child(if is_en { "Latest Version" } else { "最新版本" }))
+                                                                .child(div().font_weight(FontWeight::MEDIUM).text_color(theme.foreground).child(latest_ver_display)),
+                                                        ),
+                                                )
+                                                .when(has_conflict, |this| {
+                                                    this.child(
+                                                        v_flex()
+                                                            .w_full()
+                                                            .p(px(8.))
+                                                            .rounded(px(6.))
+                                                            .bg(rgba(0xF59E0B12))
+                                                            .border_1()
+                                                            .border_color(rgba(0xF59E0B44))
+                                                            .gap(px(4.))
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap(px(4.))
+                                                                    .child(Icon::new(IconName::TriangleAlert).size(px(12.)).text_color(rgb(0xD97706)))
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(11.))
+                                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                                            .text_color(rgb(0xD97706))
+                                                                            .child(if is_en { "Multiple Installations Detected" } else { "检测到多处安装" }),
+                                                                    ),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(10.))
+                                                                    .text_color(theme.muted_foreground)
+                                                                    .child(if is_en {
+                                                                        "Command line uses the one marked [Default]; upgrades may write elsewhere."
+                                                                    } else {
+                                                                        "命令行实际使用标「默认」的那处；升级可能写到了别处。"
+                                                                    }),
+                                                            )
+                                                            .children(tool.installations.iter().map(|inst| {
+                                                                h_flex()
+                                                                    .w_full()
+                                                                    .items_center()
+                                                                    .justify_between()
+                                                                    .gap(px(6.))
+                                                                    .text_size(px(10.))
+                                                                    .child(
+                                                                        h_flex()
+                                                                            .items_center()
+                                                                            .gap(px(4.))
+                                                                            .flex_1()
+                                                                            .child(
+                                                                                div()
+                                                                                    .px(px(4.))
+                                                                                    .py(px(0.5))
+                                                                                    .rounded(px(3.))
+                                                                                    .bg(theme.border)
+                                                                                    .font_weight(FontWeight::MEDIUM)
+                                                                                    .text_color(theme.muted_foreground)
+                                                                                    .child(inst.source.clone()),
+                                                                            )
+                                                                            .child(
+                                                                                div()
+                                                                                    .line_clamp(1)
+                                                                                    .text_color(theme.muted_foreground)
+                                                                                    .child(inst.path.clone()),
+                                                                            ),
+                                                                    )
+                                                                    .child(
+                                                                        h_flex()
+                                                                            .items_center()
+                                                                            .gap(px(4.))
+                                                                            .child(
+                                                                                div()
+                                                                                    .font_weight(FontWeight::MEDIUM)
+                                                                                    .text_color(if inst.runnable { theme.foreground } else { rgb(0xDC2626).into() })
+                                                                                    .child(if inst.runnable { inst.version.clone().unwrap_or_default() } else { "无法运行".into() }),
+                                                                            )
+                                                                            .when(inst.is_path_default, |this| {
+                                                                                this.child(
+                                                                                    div()
+                                                                                        .px(px(4.))
+                                                                                        .py(px(0.5))
+                                                                                        .rounded_full()
+                                                                                        .bg(theme.primary.opacity(0.15))
+                                                                                        .text_color(theme.primary)
+                                                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                                                        .child(if is_en { "Default" } else { "默认" }),
+                                                                                )
+                                                                            }),
+                                                                    )
+                                                            }))
+                                                    )
+                                                })
+                                                .child(
+                                                    // Bottom Action Button
+                                                    h_flex()
+                                                        .w_full()
+                                                        .justify_end()
+                                                        .child(
+                                                            if is_up {
+                                                                let tid = tool_id.clone();
+                                                                let lver = tool.latest_version.clone().unwrap_or_default();
+                                                                Button::new(SharedString::from(format!("tool-up-{}", tool_id)))
                                                                     .primary()
                                                                     .small()
-                                                                    .label(format!("升级 {}", latest_ver))
-                                                                    .on_click(cx.listener(move |_, _, window, cx| {
-                                                                        window.push_notification(Notification::success(format!("已启动 {} 的升级程序", tool_name)), cx);
+                                                                    .icon(IconName::ArrowUp)
+                                                                    .label(if lver.is_empty() { "升级".to_string() } else { format!("升级 {}", lver) })
+                                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                                        this.run_tool_upgrade(&tid, window, cx);
                                                                     }))
                                                                     .into_any_element()
+                                                            } else if is_broken {
+                                                                div()
+                                                                    .text_size(px(11.))
+                                                                    .text_color(rgb(0xD97706))
+                                                                    .child("请检查运行依赖")
+                                                                    .into_any_element()
                                                             } else if is_inst {
-                                                                Button::new(SharedString::from(format!("tool-chk-{}", tool.id)))
+                                                                Button::new(SharedString::from(format!("tool-chk-{}", tool_id)))
                                                                     .outline()
                                                                     .small()
                                                                     .disabled(true)
-                                                                    .label("已是最新")
+                                                                    .label(if is_en { "Up to date" } else { "已是最新" })
                                                                     .into_any_element()
                                                             } else {
-                                                                Button::new(SharedString::from(format!("tool-ins-{}", tool.id)))
+                                                                let tid = tool_id.clone();
+                                                                Button::new(SharedString::from(format!("tool-ins-{}", tool_id)))
                                                                     .outline()
                                                                     .small()
-                                                                    .label("一键安装")
-                                                                    .on_click(cx.listener(move |_, _, window, cx| {
-                                                                        window.push_notification(Notification::info(format!("已启动 {} 的安装引导", tool_name)), cx);
+                                                                    .icon(IconName::Plus)
+                                                                    .label(if is_en { "Install" } else { "一键安装" })
+                                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                                        this.run_tool_install(&tid, window, cx);
                                                                     }))
                                                                     .into_any_element()
                                                             }
-                                                        ),
+                                                        )
                                                 )
                                         }))
                                         .when(pair.len() == 1, |this| this.child(div().flex_1()))

@@ -4,6 +4,7 @@
 mod app_kind;
 mod claude;
 mod codex;
+mod env_checker;
 mod error;
 mod grok;
 mod opencode;
@@ -11,6 +12,11 @@ mod pi;
 mod provider;
 
 pub use app_kind::AppKind;
+pub use env_checker::{
+    build_tool_search_paths, compare_semver, extract_version, fetch_remote_latest_version,
+    infer_install_source, inspect_all_tools, inspect_tool_environment, is_version_outdated,
+    parse_semver, resolve_path_default, ToolEnvironmentStatus, ToolInstallation,
+};
 pub use claude::{
     backfill_claude_settings, extract_claude_api_key, extract_claude_base_url,
     extract_claude_model, extract_claude_provider_name, generate_claude_env,

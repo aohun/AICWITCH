@@ -23,6 +23,7 @@ use adapters_pi::{
 };
 use domain::{
     backfill_claude_settings, backfill_codex_settings, backfill_grok_settings,
+    inspect_all_tools, inspect_tool_environment,
     new_provider_id, parse_claude_form, parse_codex_form, parse_grok_form,
     parse_opencode_form, parse_pi_form, AppKind, ClaudeForm, CodexForm, DomainError,
     GrokForm, OpenCodeForm, PiForm, Provider, ProviderForm, ProviderSettings,
@@ -51,6 +52,8 @@ pub enum SessionError {
     #[error("{0}")]
     Message(String),
 }
+
+pub use domain::{ToolEnvironmentStatus, ToolInstallation};
 
 pub struct Workspace {
     store: Store,
@@ -219,6 +222,19 @@ impl Workspace {
         settings.minimize_to_tray = enabled;
         self.store.save_settings(&settings)?;
         Ok(())
+    }
+
+    pub fn inspect_environment(&self, fetch_remote: bool) -> Vec<ToolEnvironmentStatus> {
+        inspect_all_tools(fetch_remote)
+    }
+
+    pub fn inspect_tool(
+        &self,
+        tool_id: &str,
+        display_name: &str,
+        fetch_remote: bool,
+    ) -> ToolEnvironmentStatus {
+        inspect_tool_environment(tool_id, display_name, fetch_remote)
     }
 
     pub fn snapshot(&self) -> Result<AppSnapshot, SessionError> {
