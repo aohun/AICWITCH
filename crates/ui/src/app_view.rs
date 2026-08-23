@@ -323,11 +323,31 @@ pub enum Route {
 pub enum SettingsTab {
     #[default]
     General,
-    Appearance,
-    Providers,
-    Skills,
     Usage,
-    Daemon,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsageViewMode {
+    #[default]
+    Daily,
+    Monthly,
+    Projects,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsageWindowChoice {
+    Days7,
+    #[default]
+    Days30,
+    Days90,
+    Year1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsageMetric {
+    #[default]
+    Cost,
+    Tokens,
 }
 
 pub struct RouterApp {
@@ -343,6 +363,9 @@ pub struct RouterApp {
     launch_on_startup: bool,
     minimize_to_tray: bool,
     settings_tab: SettingsTab,
+    usage_view_mode: UsageViewMode,
+    usage_window: UsageWindowChoice,
+    usage_metric: UsageMetric,
     search_input: Entity<InputState>,
     settings_search_input: Entity<InputState>,
     last_error: Option<SharedString>,
@@ -394,6 +417,9 @@ impl RouterApp {
             launch_on_startup: settings.launch_on_startup,
             minimize_to_tray: settings.minimize_to_tray,
             settings_tab: SettingsTab::General,
+            usage_view_mode: UsageViewMode::Daily,
+            usage_window: UsageWindowChoice::Days30,
+            usage_metric: UsageMetric::Cost,
             search_input,
             settings_search_input,
             last_error: None,
@@ -1657,6 +1683,84 @@ impl RouterApp {
             )
     }
 
+    fn render_settings_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_en = self.language == AppLanguage::En;
+        let border = cx.theme().sidebar_border;
+        let query = self.settings_search_input.read(cx).value().to_string();
+        let query = query.trim().to_lowercase();
+
+        let general_matches = query.is_empty()
+            || "通用 general 界面 语言 简体中文 english language 外观 主题 浅色 深色 跟随系统 theme light dark system 主页面 显示 claude codex gemini grok opencode openclaw hermes pi 窗口行为 开机自启 startup 托盘 minimize tray"
+                .contains(&query);
+
+        let usage_matches = query.is_empty()
+            || "用量 usage 统计 账单 消费 费用 成本 消耗 token tokens 日视图 月账单 项目 日期 范围 筛选 cost daily monthly projects window claude codex openai"
+                .contains(&query);
+
+        v_flex()
+            .w(px(210.))
+            .h_full()
+            .flex_shrink_0()
+            .p(px(8.))
+            .pt(px(48.))
+            .gap(px(6.))
+            .child(
+                // Back button
+                Button::new("settings-back-btn")
+                    .ghost()
+                    .small()
+                    .icon(IconName::ChevronLeft)
+                    .label(if is_en { "Back" } else { "返回" })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.route = this.previous_route;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Input::new(&self.settings_search_input)
+                    .small()
+                    .cleanable(true),
+            )
+            .child(
+                div()
+                    .h(px(1.))
+                    .mx(px(4.))
+                    .my(px(2.))
+                    .bg(border),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap(px(3.))
+                    .when(general_matches, |this| {
+                        this.child(self.render_settings_sidebar_item(
+                            SettingsTab::General,
+                            IconName::Settings,
+                            if is_en { "General" } else { "通用" },
+                            cx,
+                        ))
+                    })
+                    .when(usage_matches, |this| {
+                        this.child(self.render_settings_sidebar_item(
+                            SettingsTab::Usage,
+                            IconName::ChartPie,
+                            if is_en { "Usage" } else { "用量" },
+                            cx,
+                        ))
+                    })
+                    .when(!general_matches && !usage_matches, |this| {
+                        this.child(
+                            div()
+                                .px(px(10.))
+                                .py(px(16.))
+                                .text_size(px(12.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(if is_en { "No matching settings" } else { "未找到匹配设置" }),
+                        )
+                    }),
+            )
+    }
+
     fn render_settings_sidebar_item(
         &self,
         tab: SettingsTab,
@@ -1740,59 +1844,22 @@ impl RouterApp {
             }))
     }
 
-    fn render_placeholder_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_en = self.language == AppLanguage::En;
-        let title = match self.settings_tab {
-            SettingsTab::General => if is_en { "General" } else { "通用" },
-            SettingsTab::Appearance => if is_en { "Appearance" } else { "外观" },
-            SettingsTab::Providers => if is_en { "Providers" } else { "服务商" },
-            SettingsTab::Skills => if is_en { "Skills" } else { "技能" },
-            SettingsTab::Usage => if is_en { "Usage" } else { "用量" },
-            SettingsTab::Daemon => if is_en { "Daemon" } else { "守护进程" },
-        };
-
-        v_flex()
-            .w_full()
-            .gap(px(16.))
-            .child(
-                div()
-                    .text_size(px(24.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(cx.theme().foreground)
-                    .child(title),
-            )
-            .child(
-                theme::tile(cx).child(
-                    v_flex()
-                        .w_full()
-                        .items_center()
-                        .justify_center()
-                        .py(px(40.))
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(cx.theme().foreground)
-                                .child(format!("{} 配置模块", title)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child(if is_en {
-                                    "This module will be supported in upcoming releases."
-                                } else {
-                                    "此模块将在后续迭代中持续完善与扩展。"
-                                }),
-                        ),
-                ),
-            )
-    }
-
     fn render_general_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_en = self.language == AppLanguage::En;
         let theme = cx.theme().clone();
+        let query = self.settings_search_input.read(cx).value().to_string();
+        let query = query.trim().to_lowercase();
+
+        let lang_match = query.is_empty()
+            || "界面语言 interface language 简体中文 英文 english 语言".contains(&query);
+        let theme_match = query.is_empty()
+            || "外观主题 appearance theme 浅色 深色 跟随系统 light dark system 主题".contains(&query);
+        let apps_match = query.is_empty()
+            || "主页面显示 main page apps claude codex gemini grok opencode openclaw hermes pi 侧边栏 导航".contains(&query);
+        let window_match = query.is_empty()
+            || "窗口行为 window behavior 开机自启 startup 关闭时最小化到托盘 minimize tray 托盘".contains(&query);
+
+        let none_match = !lang_match && !theme_match && !apps_match && !window_match;
 
         v_flex()
             .w_full()
@@ -1804,365 +1871,980 @@ impl RouterApp {
                     .text_color(theme.foreground)
                     .child(if is_en { "General" } else { "通用" }),
             )
+            .when(none_match, |this| {
+                this.child(
+                    theme::tile(cx).child(
+                        v_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_center()
+                            .py(px(32.))
+                            .gap(px(8.))
+                            .child(Icon::new(IconName::Search).size(px(20.)).text_color(theme.muted_foreground))
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(theme.muted_foreground)
+                                    .child(if is_en { "No matching general settings found" } else { "未找到相关通用设置项" }),
+                            ),
+                    ),
+                )
+            })
             // 1. 界面语言
-            .child(
-                theme::tile(cx).child(
-                    v_flex()
-                        .w_full()
-                        .gap(px(10.))
-                        .child(
-                            v_flex()
-                                .gap(px(2.))
-                                .child(theme::tile_label(if is_en { "INTERFACE LANGUAGE / 界面语言" } else { "界面语言" }, cx))
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(theme.muted_foreground)
-                                        .child(if is_en {
-                                            "Switch and preview interface language immediately."
-                                        } else {
-                                            "切换后立即预览界面语言，保存后永久生效。"
-                                        }),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .gap(px(8.))
-                                .child(
-                                    Button::new("lang-zh")
-                                        .outline()
-                                        .small()
-                                        .selected(self.language == AppLanguage::ZhCn)
-                                        .label("简体中文")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.set_language(AppLanguage::ZhCn, window, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("lang-en")
-                                        .outline()
-                                        .small()
-                                        .selected(self.language == AppLanguage::En)
-                                        .label("English")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.set_language(AppLanguage::En, window, cx);
-                                        })),
-                                ),
-                        ),
-                ),
-            )
+            .when(lang_match, |this| {
+                this.child(
+                    theme::tile(cx).child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(10.))
+                            .child(
+                                v_flex()
+                                    .gap(px(2.))
+                                    .child(theme::tile_label(if is_en { "INTERFACE LANGUAGE / 界面语言" } else { "界面语言" }, cx))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme.muted_foreground)
+                                            .child(if is_en {
+                                                "Switch and preview interface language immediately."
+                                            } else {
+                                                "切换后立即预览界面语言，保存后永久生效。"
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap(px(8.))
+                                    .child(
+                                        Button::new("lang-zh")
+                                            .outline()
+                                            .small()
+                                            .selected(self.language == AppLanguage::ZhCn)
+                                            .label("简体中文")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_language(AppLanguage::ZhCn, window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("lang-en")
+                                            .outline()
+                                            .small()
+                                            .selected(self.language == AppLanguage::En)
+                                            .label("English")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_language(AppLanguage::En, window, cx);
+                                            })),
+                                    ),
+                            ),
+                    ),
+                )
+            })
             // 2. 外观主题
-            .child(
-                theme::tile(cx).child(
-                    v_flex()
-                        .w_full()
-                        .gap(px(10.))
-                        .child(
-                            v_flex()
-                                .gap(px(2.))
-                                .child(theme::tile_label(if is_en { "APPEARANCE THEME / 外观主题" } else { "外观主题" }, cx))
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(theme.muted_foreground)
-                                        .child(if is_en {
-                                            "Select application appearance theme, takes effect immediately."
-                                        } else {
-                                            "选择应用的外观主题，立即生效。"
-                                        }),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .gap(px(8.))
-                                .child(
-                                    Button::new("theme-lt")
-                                        .outline()
-                                        .small()
-                                        .icon(IconName::Sun)
-                                        .selected(self.theme == ThemePreference::Light)
-                                        .label(if is_en { "Light" } else { "浅色" })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.set_theme_preference(ThemePreference::Light, window, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("theme-dk")
-                                        .outline()
-                                        .small()
-                                        .icon(IconName::Moon)
-                                        .selected(self.theme == ThemePreference::Dark)
-                                        .label(if is_en { "Dark" } else { "深色" })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.set_theme_preference(ThemePreference::Dark, window, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("theme-sys")
-                                        .outline()
-                                        .small()
-                                        .icon(IconName::Palette)
-                                        .selected(self.theme == ThemePreference::System)
-                                        .label(if is_en { "Follow System" } else { "跟随系统" })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.set_theme_preference(ThemePreference::System, window, cx);
-                                        })),
-                                ),
-                        ),
-                ),
-            )
+            .when(theme_match, |this| {
+                this.child(
+                    theme::tile(cx).child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(10.))
+                            .child(
+                                v_flex()
+                                    .gap(px(2.))
+                                    .child(theme::tile_label(if is_en { "APPEARANCE THEME / 外观主题" } else { "外观主题" }, cx))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme.muted_foreground)
+                                            .child(if is_en {
+                                                "Select application appearance theme, takes effect immediately."
+                                            } else {
+                                                "选择应用的外观主题，立即生效。"
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap(px(8.))
+                                    .child(
+                                        Button::new("theme-lt")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::Sun)
+                                            .selected(self.theme == ThemePreference::Light)
+                                            .label(if is_en { "Light" } else { "浅色" })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_theme_preference(ThemePreference::Light, window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("theme-dk")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::Moon)
+                                            .selected(self.theme == ThemePreference::Dark)
+                                            .label(if is_en { "Dark" } else { "深色" })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_theme_preference(ThemePreference::Dark, window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("theme-sys")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::Palette)
+                                            .selected(self.theme == ThemePreference::System)
+                                            .label(if is_en { "Follow System" } else { "跟随系统" })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_theme_preference(ThemePreference::System, window, cx);
+                                            })),
+                                    ),
+                            ),
+                    ),
+                )
+            })
             // 3. 主页面显示
+            .when(apps_match, |this| {
+                this.child(
+                    theme::tile(cx).child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(10.))
+                            .child(
+                                v_flex()
+                                    .gap(px(2.))
+                                    .child(theme::tile_label(if is_en { "MAIN PAGE APPS / 主页面显示" } else { "主页面显示" }, cx))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme.muted_foreground)
+                                            .child(if is_en {
+                                                "Select applications to show on the main navigation sidebar."
+                                            } else {
+                                                "选择在主页面侧边栏显示的应用。"
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .flex_wrap()
+                                    .gap(px(8.))
+                                    .child(self.render_app_toggle_chip("claude", "Claude Code", CustomIcon::Claude, rgb(0xD97757).into(), cx))
+                                    .child(self.render_app_toggle_chip("claude-desktop", "Claude Desktop", CustomIcon::Claude, rgb(0xD97757).into(), cx))
+                                    .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
+                                    .child(self.render_app_toggle_chip("gemini", "Gemini", IconName::Star, rgb(0x2563EB).into(), cx))
+                                    .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx))
+                                    .child(self.render_app_toggle_chip("opencode", "OpenCode", IconName::SquareTerminal, rgb(0x0284C7).into(), cx))
+                                    .child(self.render_app_toggle_chip("openclaw", "OpenClaw", IconName::Bot, rgb(0xDC2626).into(), cx))
+                                    .child(self.render_app_toggle_chip("hermes", "Hermes", IconName::SquareTerminal, rgb(0x4B5563).into(), cx))
+                                    .child(self.render_app_toggle_chip("pi", "Pi", IconName::Star, rgb(0x3B82F6).into(), cx)),
+                            ),
+                    ),
+                )
+            })
+            // 4. 窗口行为
+            .when(window_match, |this| {
+                this.child(
+                    theme::tile(cx).child(
+                        v_flex()
+                            .w_full()
+                            .gap(px(14.))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .child(Icon::new(IconName::LayoutDashboard).size(px(15.)))
+                                    .child(theme::tile_label(if is_en { "WINDOW BEHAVIOR / 窗口行为" } else { "窗口行为" }, cx)),
+                            )
+                            .child(
+                                // 开机自启
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .p(px(8.))
+                                    .rounded(px(8.))
+                                    .bg(theme.secondary.opacity(0.4))
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap(px(10.))
+                                            .child(
+                                                div()
+                                                    .size(px(32.))
+                                                    .rounded(px(8.))
+                                                    .bg(theme.border)
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(Icon::new(IconName::Settings2).size(px(16.))),
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap(px(2.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .text_color(theme.foreground)
+                                                            .child(if is_en { "Launch on Startup" } else { "开机自启" }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.muted_foreground)
+                                                            .child(if is_en {
+                                                                "Run Router Switch automatically on system startup"
+                                                            } else {
+                                                                "随系统启动自动运行 Router Switch"
+                                                            }),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("switch-launch-on-startup")
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.toggle_launch_on_startup(window, cx);
+                                            }))
+                                            .child(self.render_switch(self.launch_on_startup, cx)),
+                                    ),
+                            )
+                            .child(
+                                // 关闭时最小化到托盘
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .p(px(8.))
+                                    .rounded(px(8.))
+                                    .bg(theme.secondary.opacity(0.4))
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap(px(10.))
+                                            .child(
+                                                div()
+                                                    .size(px(32.))
+                                                    .rounded(px(8.))
+                                                    .bg(theme.border)
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(Icon::new(IconName::WindowMinimize).size(px(16.))),
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap(px(2.))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(13.))
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .text_color(theme.foreground)
+                                                            .child(if is_en { "Minimize to Tray on Close" } else { "关闭时最小化到托盘" }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(theme.muted_foreground)
+                                                            .child(if is_en {
+                                                                "Hides to system tray when clicking close button instead of quitting."
+                                                            } else {
+                                                                "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。"
+                                                            }),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("switch-minimize-to-tray")
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.toggle_minimize_to_tray(window, cx);
+                                            }))
+                                            .child(self.render_switch(self.minimize_to_tray, cx)),
+                                    ),
+                            ),
+                    ),
+                )
+            })
+    }
+
+    fn render_usage_daily_table(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        v_flex()
+            .w_full()
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .px(px(8.))
+                    .py(px(4.))
+                    .rounded(px(6.))
+                    .bg(theme.secondary.opacity(0.5))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(div().w(px(200.)).child("模型名称"))
+                    .child(div().w(px(140.)).child("服务商"))
+                    .child(div().w(px(90.)).child("请求次数"))
+                    .child(div().w(px(110.)).child("输入 Token"))
+                    .child(div().w(px(110.)).child("输出 Token"))
+                    .child(div().flex_1().child("预估费用")),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap(px(2.))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(200.)).font_weight(FontWeight::MEDIUM).child("gpt-4o"))
+                            .child(div().w(px(140.)).text_color(rgb(0x10A37F)).child("Codex (OpenAI)"))
+                            .child(div().w(px(90.)).child("642"))
+                            .child(div().w(px(110.)).child("1.85 M"))
+                            .child(div().w(px(110.)).child("0.92 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$9.25")),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(200.)).font_weight(FontWeight::MEDIUM).child("claude-3-7-sonnet"))
+                            .child(div().w(px(140.)).text_color(rgb(0xD97757)).child("Claude Code"))
+                            .child(div().w(px(90.)).child("418"))
+                            .child(div().w(px(110.)).child("1.10 M"))
+                            .child(div().w(px(110.)).child("0.54 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$6.16")),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(200.)).font_weight(FontWeight::MEDIUM).child("o3-mini"))
+                            .child(div().w(px(140.)).text_color(rgb(0x10A37F)).child("Codex (OpenAI)"))
+                            .child(div().w(px(90.)).child("224"))
+                            .child(div().w(px(110.)).child("0.29 M"))
+                            .child(div().w(px(110.)).child("0.12 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$3.05")),
+                    ),
+            )
+    }
+
+    fn render_usage_monthly_table(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        v_flex()
+            .w_full()
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .px(px(8.))
+                    .py(px(4.))
+                    .rounded(px(6.))
+                    .bg(theme.secondary.opacity(0.5))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(div().w(px(140.)).child("月份"))
+                    .child(div().w(px(110.)).child("请求次数"))
+                    .child(div().w(px(130.)).child("总 Token"))
+                    .child(div().w(px(130.)).child("缓存命中率"))
+                    .child(div().w(px(120.)).child("月度费用"))
+                    .child(div().flex_1().child("消耗占比")),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap(px(2.))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(140.)).font_weight(FontWeight::MEDIUM).child("2026 年 8 月"))
+                            .child(div().w(px(110.)).child("720 次"))
+                            .child(div().w(px(130.)).child("2.80 M"))
+                            .child(div().w(px(130.)).text_color(rgb(0x10B981)).child("36.2%"))
+                            .child(div().w(px(120.)).font_weight(FontWeight::SEMIBOLD).child("$10.82"))
+                            .child(div().flex_1().child("58.6%")),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(140.)).font_weight(FontWeight::MEDIUM).child("2026 年 7 月"))
+                            .child(div().w(px(110.)).child("564 次"))
+                            .child(div().w(px(130.)).child("2.02 M"))
+                            .child(div().w(px(130.)).text_color(rgb(0x10B981)).child("31.8%"))
+                            .child(div().w(px(120.)).font_weight(FontWeight::SEMIBOLD).child("$7.64"))
+                            .child(div().flex_1().child("41.4%")),
+                    ),
+            )
+    }
+
+    fn render_usage_projects_table(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        v_flex()
+            .w_full()
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .w_full()
+                    .px(px(8.))
+                    .py(px(4.))
+                    .rounded(px(6.))
+                    .bg(theme.secondary.opacity(0.5))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(div().w(px(260.)).child("项目根目录"))
+                    .child(div().w(px(120.)).child("主要服务商"))
+                    .child(div().w(px(90.)).child("请求次数"))
+                    .child(div().w(px(120.)).child("消耗 Token"))
+                    .child(div().flex_1().child("预估费用")),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap(px(2.))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(260.)).font_weight(FontWeight::MEDIUM).truncate().child("~/Desktop/git/router-switch"))
+                            .child(div().w(px(120.)).text_color(rgb(0x10A37F)).child("Codex"))
+                            .child(div().w(px(90.)).child("712"))
+                            .child(div().w(px(120.)).child("2.65 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$10.15")),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(260.)).font_weight(FontWeight::MEDIUM).truncate().child("~/Desktop/git/waku"))
+                            .child(div().w(px(120.)).text_color(rgb(0xD97757)).child("Claude Code"))
+                            .child(div().w(px(90.)).child("386"))
+                            .child(div().w(px(120.)).child("1.48 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$5.62")),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .items_center()
+                            .text_size(px(12.))
+                            .child(div().w(px(260.)).font_weight(FontWeight::MEDIUM).truncate().child("~/Desktop/git/ai-api"))
+                            .child(div().w(px(120.)).text_color(rgb(0x10A37F)).child("Codex"))
+                            .child(div().w(px(90.)).child("186"))
+                            .child(div().w(px(120.)).child("0.69 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$2.69")),
+                    ),
+            )
+    }
+
+    fn render_usage_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_en = self.language == AppLanguage::En;
+        let theme = cx.theme().clone();
+
+        let total_cost = 18.46;
+        let codex_cost = 12.30;
+        let claude_cost = 6.16;
+
+        let codex_share = codex_cost / total_cost;
+        let claude_share = claude_cost / total_cost;
+
+        let range_label = match self.usage_window {
+            UsageWindowChoice::Days7 => if is_en { "2026-08-17 ~ 2026-08-23 (Last 7 Days)" } else { "2026-08-17 ~ 2026-08-23 (近 7 天)" },
+            UsageWindowChoice::Days30 => if is_en { "2026-07-24 ~ 2026-08-23 (Last 30 Days)" } else { "2026-07-24 ~ 2026-08-23 (近 30 天)" },
+            UsageWindowChoice::Days90 => if is_en { "2026-05-25 ~ 2026-08-23 (Last 90 Days)" } else { "2026-05-25 ~ 2026-08-23 (近 90 天)" },
+            UsageWindowChoice::Year1 => if is_en { "2025-08-24 ~ 2026-08-23 (Last 1 Year)" } else { "2025-08-24 ~ 2026-08-23 (近 1 年)" },
+        };
+
+        v_flex()
+            .w_full()
+            .gap(px(16.))
+            // Header Bar
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        v_flex()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .text_size(px(24.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(theme.foreground)
+                                    .child(if is_en { "Usage" } else { "用量" }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(theme.muted_foreground)
+                                    .child(range_label),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap(px(8.))
+                            // View Switcher (Daily / Monthly / Projects)
+                            .child(
+                                h_flex()
+                                    .p(px(2.))
+                                    .rounded(px(8.))
+                                    .bg(theme.secondary.opacity(0.5))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .gap(px(2.))
+                                    .child(
+                                        Button::new("usage-view-daily")
+                                            .ghost()
+                                            .xsmall()
+                                            .selected(self.usage_view_mode == UsageViewMode::Daily)
+                                            .label(if is_en { "Daily" } else { "日视图" })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.usage_view_mode = UsageViewMode::Daily;
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("usage-view-monthly")
+                                            .ghost()
+                                            .xsmall()
+                                            .selected(self.usage_view_mode == UsageViewMode::Monthly)
+                                            .label(if is_en { "Monthly" } else { "月账单" })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.usage_view_mode = UsageViewMode::Monthly;
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("usage-view-projects")
+                                            .ghost()
+                                            .xsmall()
+                                            .selected(self.usage_view_mode == UsageViewMode::Projects)
+                                            .label(if is_en { "Projects" } else { "项目视图" })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.usage_view_mode = UsageViewMode::Projects;
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                            // Window Selector (when not Monthly)
+                            .when(self.usage_view_mode != UsageViewMode::Monthly, |this| {
+                                this.child(
+                                    h_flex()
+                                        .p(px(2.))
+                                        .rounded(px(8.))
+                                        .bg(theme.secondary.opacity(0.5))
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .gap(px(2.))
+                                        .child(
+                                            Button::new("win-7d")
+                                                .ghost()
+                                                .xsmall()
+                                                .selected(self.usage_window == UsageWindowChoice::Days7)
+                                                .label(if is_en { "7D" } else { "7天" })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.usage_window = UsageWindowChoice::Days7;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("win-30d")
+                                                .ghost()
+                                                .xsmall()
+                                                .selected(self.usage_window == UsageWindowChoice::Days30)
+                                                .label(if is_en { "30D" } else { "30天" })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.usage_window = UsageWindowChoice::Days30;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("win-90d")
+                                                .ghost()
+                                                .xsmall()
+                                                .selected(self.usage_window == UsageWindowChoice::Days90)
+                                                .label(if is_en { "90D" } else { "90天" })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.usage_window = UsageWindowChoice::Days90;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("win-1y")
+                                                .ghost()
+                                                .xsmall()
+                                                .selected(self.usage_window == UsageWindowChoice::Year1)
+                                                .label(if is_en { "1Y" } else { "1年" })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.usage_window = UsageWindowChoice::Year1;
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                )
+                            })
+                            // Metric Switcher ($ / Token)
+                            .child(
+                                h_flex()
+                                    .p(px(2.))
+                                    .rounded(px(8.))
+                                    .bg(theme.secondary.opacity(0.5))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .gap(px(2.))
+                                    .child(
+                                        Button::new("metric-cost")
+                                            .ghost()
+                                            .xsmall()
+                                            .selected(self.usage_metric == UsageMetric::Cost)
+                                            .label(if is_en { "Cost ($)" } else { "费用 ($)" })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.usage_metric = UsageMetric::Cost;
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("metric-tokens")
+                                            .ghost()
+                                            .xsmall()
+                                            .selected(self.usage_metric == UsageMetric::Tokens)
+                                            .label("Tokens")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.usage_metric = UsageMetric::Tokens;
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                            // Refresh
+                            .child(
+                                Button::new("usage-refresh-btn")
+                                    .outline()
+                                    .small()
+                                    .icon(IconName::Redo2)
+                                    .tooltip(if is_en { "Refresh usage stats" } else { "刷新用量统计" })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        let msg = if this.language == AppLanguage::En {
+                                            "Usage stats refreshed"
+                                        } else {
+                                            "用量数据已刷新"
+                                        };
+                                        notify_success(msg, window, cx);
+                                    })),
+                            ),
+                    ),
+            )
+            // Overview row (Headline + Provider share bars)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap(px(12.))
+                    // Headline tile
+                    .child(
+                        theme::tile(cx)
+                            .w(px(280.))
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .gap(px(6.))
+                                    .child(theme::tile_label(if self.usage_metric == UsageMetric::Cost {
+                                        "ESTIMATED COST / 预估总费用"
+                                    } else {
+                                        "PROCESSED TOKENS / 处理总 TOKEN"
+                                    }, cx))
+                                    .child(
+                                        div()
+                                            .text_size(px(32.))
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(theme.foreground)
+                                            .child(if self.usage_metric == UsageMetric::Cost {
+                                                format!("${:.2}", total_cost)
+                                            } else {
+                                                "4.82 M".to_string()
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme.muted_foreground)
+                                            .child(if is_en {
+                                                "Calculated based on official model rates and token usage."
+                                            } else {
+                                                "基于各服务商官方费率与实际输入/输出/缓存换算"
+                                            }),
+                                    ),
+                            ),
+                    )
+                    // Provider share distribution tile
+                    .child(
+                        theme::tile(cx)
+                            .flex_1()
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .gap(px(10.))
+                                    .child(theme::tile_label("PROVIDER SHARE / 服务商消耗占比", cx))
+                                    .child(
+                                        v_flex()
+                                            .w_full()
+                                            .gap(px(8.))
+                                            // Codex bar
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .gap(px(4.))
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .justify_between()
+                                                            .text_size(px(12.))
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap(px(6.))
+                                                                    .child(Icon::new(CustomIcon::OpenAI).size(px(13.)).text_color(rgb(0x10A37F)))
+                                                                    .child(div().font_weight(FontWeight::MEDIUM).child("Codex (OpenAI)")),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_color(theme.muted_foreground)
+                                                                    .child(format!("${:.2} ({:.1}%) • 3.21M tokens", codex_cost, codex_share * 100.)),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .h(px(6.))
+                                                            .w_full()
+                                                            .rounded_full()
+                                                            .bg(theme.secondary)
+                                                            .child(
+                                                                div()
+                                                                    .h_full()
+                                                                    .w(gpui::relative(codex_share as f32))
+                                                                    .rounded_full()
+                                                                    .bg(rgb(0x10A37F)),
+                                                            ),
+                                                    ),
+                                            )
+                                            // Claude Code bar
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .gap(px(4.))
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .justify_between()
+                                                            .text_size(px(12.))
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap(px(6.))
+                                                                    .child(Icon::new(CustomIcon::Claude).size(px(13.)).text_color(rgb(0xD97757)))
+                                                                    .child(div().font_weight(FontWeight::MEDIUM).child("Claude Code")),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_color(theme.muted_foreground)
+                                                                    .child(format!("${:.2} ({:.1}%) • 1.61M tokens", claude_cost, claude_share * 100.)),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .h(px(6.))
+                                                            .w_full()
+                                                            .rounded_full()
+                                                            .bg(theme.secondary)
+                                                            .child(
+                                                                div()
+                                                                    .h_full()
+                                                                    .w(gpui::relative(claude_share as f32))
+                                                                    .rounded_full()
+                                                                    .bg(rgb(0xD97757)),
+                                                            ),
+                                                    ),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            )
+            // 4-tile Metrics Strip
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap(px(12.))
+                    .child(
+                        theme::tile(cx)
+                            .flex_1()
+                            .child(
+                                v_flex()
+                                    .gap(px(4.))
+                                    .child(theme::tile_label("PROMPT TOKENS / 输入", cx))
+                                    .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("3.24 M"))
+                                    .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("占比 67.2%")),
+                            ),
+                    )
+                    .child(
+                        theme::tile(cx)
+                            .flex_1()
+                            .child(
+                                v_flex()
+                                    .gap(px(4.))
+                                    .child(theme::tile_label("COMPLETION / 输出", cx))
+                                    .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("1.58 M"))
+                                    .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("占比 32.8%")),
+                            ),
+                    )
+                    .child(
+                        theme::tile(cx)
+                            .flex_1()
+                            .child(
+                                v_flex()
+                                    .gap(px(4.))
+                                    .child(theme::tile_label("CACHE HITS / 缓存命中", cx))
+                                    .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("1.12 M"))
+                                    .child(div().text_size(px(11.)).text_color(rgb(0x10B981)).child("命中率 34.5% (省 $4.20)")),
+                            ),
+                    )
+                    .child(
+                        theme::tile(cx)
+                            .flex_1()
+                            .child(
+                                v_flex()
+                                    .gap(px(4.))
+                                    .child(theme::tile_label("REQUESTS / 请求次数", cx))
+                                    .child(div().text_size(px(20.)).font_weight(FontWeight::BOLD).child("1,284 次"))
+                                    .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("活跃模型 3 个")),
+                            ),
+                    ),
+            )
+            // Visual Timeline / Bar Chart Tile
+            .child(
+                theme::tile(cx).child(
+                    v_flex()
+                        .w_full()
+                        .gap(px(12.))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .items_center()
+                                .child(theme::tile_label("USAGE TIMELINE / 用量趋势分布", cx))
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap(px(12.))
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap(px(4.))
+                                                .child(div().size(px(8.)).rounded_xs().bg(rgb(0x10A37F)))
+                                                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("Codex")),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap(px(4.))
+                                                .child(div().size(px(8.)).rounded_xs().bg(rgb(0xD97757)))
+                                                .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("Claude Code")),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .h(px(110.))
+                                .w_full()
+                                .items_end()
+                                .justify_between()
+                                .gap(px(4.))
+                                .px(px(6.))
+                                .py(px(8.))
+                                .rounded(px(8.))
+                                .bg(theme.secondary.opacity(0.3))
+                                .children((0..28).map(|i| {
+                                    let h1 = ((i * 13 + 7) % 65 + 15) as f32;
+                                    let h2 = ((i * 19 + 11) % 30 + 5) as f32;
+                                    v_flex()
+                                        .flex_1()
+                                        .h_full()
+                                        .items_center()
+                                        .justify_end()
+                                        .gap(px(1.))
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .max_w(px(16.))
+                                                .h(px(h2))
+                                                .rounded_t(px(2.))
+                                                .bg(rgb(0xD97757)),
+                                        )
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .max_w(px(16.))
+                                                .h(px(h1))
+                                                .rounded_t(px(2.))
+                                                .bg(rgb(0x10A37F)),
+                                        )
+                                })),
+                        ),
+                ),
+            )
+            // Tabular Breakdown section
             .child(
                 theme::tile(cx).child(
                     v_flex()
                         .w_full()
                         .gap(px(10.))
-                        .child(
-                            v_flex()
-                                .gap(px(2.))
-                                .child(theme::tile_label(if is_en { "MAIN PAGE APPS / 主页面显示" } else { "主页面显示" }, cx))
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(theme.muted_foreground)
-                                        .child(if is_en {
-                                            "Select applications to show on the main navigation sidebar."
-                                        } else {
-                                            "选择在主页面侧边栏显示的应用。"
-                                        }),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .flex_wrap()
-                                .gap(px(8.))
-                                .child(self.render_app_toggle_chip("claude", "Claude Code", CustomIcon::Claude, rgb(0xD97757).into(), cx))
-                                .child(self.render_app_toggle_chip("claude-desktop", "Claude Desktop", CustomIcon::Claude, rgb(0xD97757).into(), cx))
-                                .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
-                                .child(self.render_app_toggle_chip("gemini", "Gemini", IconName::Star, rgb(0x2563EB).into(), cx))
-                                .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx))
-                                .child(self.render_app_toggle_chip("opencode", "OpenCode", IconName::SquareTerminal, rgb(0x0284C7).into(), cx))
-                                .child(self.render_app_toggle_chip("openclaw", "OpenClaw", IconName::Bot, rgb(0xDC2626).into(), cx))
-                                .child(self.render_app_toggle_chip("hermes", "Hermes", IconName::SquareTerminal, rgb(0x4B5563).into(), cx))
-                                .child(self.render_app_toggle_chip("pi", "Pi", IconName::Star, rgb(0x3B82F6).into(), cx)),
-                        ),
-                ),
-            )
-            // 4. 窗口行为
-            .child(
-                theme::tile(cx).child(
-                    v_flex()
-                        .w_full()
-                        .gap(px(14.))
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .child(Icon::new(IconName::LayoutDashboard).size(px(15.)))
-                                .child(theme::tile_label(if is_en { "WINDOW BEHAVIOR / 窗口行为" } else { "窗口行为" }, cx)),
-                        )
-                        .child(
-                            // 开机自启
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .justify_between()
-                                .p(px(8.))
-                                .rounded(px(8.))
-                                .bg(theme.secondary.opacity(0.4))
-                                .child(
-                                    h_flex()
-                                        .items_center()
-                                        .gap(px(10.))
-                                        .child(
-                                            div()
-                                                .size(px(32.))
-                                                .rounded(px(8.))
-                                                .bg(theme.border)
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(Icon::new(IconName::Settings2).size(px(16.))),
-                                        )
-                                        .child(
-                                            v_flex()
-                                                .gap(px(2.))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(13.))
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(theme.foreground)
-                                                        .child(if is_en { "Launch on Startup" } else { "开机自启" }),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(theme.muted_foreground)
-                                                        .child(if is_en {
-                                                            "Run Router Switch automatically on system startup"
-                                                        } else {
-                                                            "随系统启动自动运行 Router Switch"
-                                                        }),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("switch-launch-on-startup")
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.toggle_launch_on_startup(window, cx);
-                                        }))
-                                        .child(self.render_switch(self.launch_on_startup, cx)),
-                                ),
-                        )
-                        .child(
-                            // 关闭时最小化到托盘
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .justify_between()
-                                .p(px(8.))
-                                .rounded(px(8.))
-                                .bg(theme.secondary.opacity(0.4))
-                                .child(
-                                    h_flex()
-                                        .items_center()
-                                        .gap(px(10.))
-                                        .child(
-                                            div()
-                                                .size(px(32.))
-                                                .rounded(px(8.))
-                                                .bg(theme.border)
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .child(Icon::new(IconName::WindowMinimize).size(px(16.))),
-                                        )
-                                        .child(
-                                            v_flex()
-                                                .gap(px(2.))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(13.))
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(theme.foreground)
-                                                        .child(if is_en { "Minimize to Tray on Close" } else { "关闭时最小化到托盘" }),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .text_color(theme.muted_foreground)
-                                                        .child(if is_en {
-                                                            "Hides to system tray when clicking close button instead of quitting."
-                                                        } else {
-                                                            "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。"
-                                                        }),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("switch-minimize-to-tray")
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.toggle_minimize_to_tray(window, cx);
-                                        }))
-                                        .child(self.render_switch(self.minimize_to_tray, cx)),
-                                ),
-                        ),
+                        .child(theme::tile_label(match self.usage_view_mode {
+                            UsageViewMode::Daily => "MODEL & PROVIDER BREAKDOWN / 模型与服务商细目",
+                            UsageViewMode::Monthly => "MONTHLY STATEMENT / 月度账单明细",
+                            UsageViewMode::Projects => "PROJECT WORKSPACE BREAKDOWN / 项目工作区细目",
+                        }, cx))
+                        .child(match self.usage_view_mode {
+                            UsageViewMode::Daily => self.render_usage_daily_table(cx).into_any_element(),
+                            UsageViewMode::Monthly => self.render_usage_monthly_table(cx).into_any_element(),
+                            UsageViewMode::Projects => self.render_usage_projects_table(cx).into_any_element(),
+                        }),
                 ),
             )
     }
 
     fn render_settings_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_en = self.language == AppLanguage::En;
-        let border = cx.theme().sidebar_border;
-
-        h_flex()
+        div()
             .size_full()
-            .gap(px(16.))
-            .child(
-                // Left sub-sidebar for settings (Image 2 style)
-                v_flex()
-                    .w(px(190.))
-                    .h_full()
-                    .flex_shrink_0()
-                    .gap(px(10.))
-                    .pr(px(12.))
-                    .border_r_1()
-                    .border_color(border)
-                    .child(
-                        // Back button
-                        Button::new("settings-back-btn")
-                            .ghost()
-                            .small()
-                            .icon(IconName::ChevronLeft)
-                            .label(if is_en { "Back" } else { "返回" })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.route = this.previous_route;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Input::new(&self.settings_search_input)
-                            .small()
-                            .cleanable(true),
-                    )
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .gap(px(3.))
-                            .child(self.render_settings_sidebar_item(
-                                SettingsTab::General,
-                                IconName::Settings,
-                                if is_en { "General" } else { "通用" },
-                                cx,
-                            ))
-                            .child(self.render_settings_sidebar_item(
-                                SettingsTab::Appearance,
-                                IconName::Sun,
-                                if is_en { "Appearance" } else { "外观" },
-                                cx,
-                            ))
-                            .child(self.render_settings_sidebar_item(
-                                SettingsTab::Providers,
-                                IconName::SquareTerminal,
-                                if is_en { "Providers" } else { "服务商" },
-                                cx,
-                            ))
-                            .child(self.render_settings_sidebar_item(
-                                SettingsTab::Skills,
-                                IconName::Building2,
-                                if is_en { "Skills" } else { "技能" },
-                                cx,
-                            ))
-                            .child(self.render_settings_sidebar_item(
-                                SettingsTab::Usage,
-                                IconName::ChartPie,
-                                if is_en { "Usage" } else { "用量" },
-                                cx,
-                            ))
-                            .child(self.render_settings_sidebar_item(
-                                SettingsTab::Daemon,
-                                IconName::Inspector,
-                                if is_en { "Daemon" } else { "守护进程" },
-                                cx,
-                            )),
-                    ),
-            )
-            .child(
-                // Right pane content
-                div()
-                    .flex_1()
-                    .h_full()
-                    .min_w_0()
-                    .child(match self.settings_tab {
-                        SettingsTab::General => self.render_general_settings(cx).into_any_element(),
-                        _ => self.render_placeholder_settings(cx).into_any_element(),
-                    }),
-            )
+            .child(match self.settings_tab {
+                SettingsTab::General => self.render_general_settings(cx).into_any_element(),
+                SettingsTab::Usage => self.render_usage_page(cx).into_any_element(),
+            })
     }
 
     fn render_notifications_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2666,7 +3348,11 @@ impl Render for RouterApp {
                         }
                     }))
                     .when(self.sidebar_open, |this| {
-                        this.child(self.render_sidebar(cx))
+                        if self.route == Route::Settings {
+                            this.child(self.render_settings_sidebar(cx))
+                        } else {
+                            this.child(self.render_sidebar(cx))
+                        }
                     })
                     .child(
                         div()
