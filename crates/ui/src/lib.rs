@@ -23,11 +23,11 @@ pub fn run() {
         let bounds = Bounds::centered(None, window_size, cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Router Switch".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(gpui::point(px(18.), px(18.))),
-            }),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Router Switch".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(gpui::point(px(16.), px(16.))),
+                }),
             window_background: WindowBackgroundAppearance::Blurred,
             window_min_size: Some(size(px(760.), px(520.))),
             kind: WindowKind::Normal,

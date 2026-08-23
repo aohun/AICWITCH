@@ -5,7 +5,7 @@ use domain::{
     CodexForm, CodexKind, CodexPreset, Provider, RESPONSES_PRESETS,
 };
 use gpui::{
-    div, prelude::FluentBuilder, px, rgb, App, AppContext, Context, Entity, FontWeight,
+    div, prelude::FluentBuilder, px, rgb, App, AppContext, Context, Entity, FontWeight, Hsla,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Window, WindowControlArea,
 };
@@ -26,7 +26,7 @@ use store::ThemePreference;
 use crate::assets::CustomIcon;
 use crate::theme::{self, StatusColors};
 
-pub const CHROME_HEIGHT: f32 = 44.;
+pub const CHROME_HEIGHT: f32 = 46.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -404,6 +404,7 @@ impl RouterApp {
         &self,
         id: &'static str,
         icon: impl Into<Icon>,
+        icon_color: Option<Hsla>,
         label: &'static str,
         route: Route,
         badge: Option<String>,
@@ -431,7 +432,7 @@ impl RouterApp {
                 Icon::new(icon)
                     .size(px(18.))
                     .flex_shrink_0()
-                    .text_color(if active { cx.theme().foreground } else { fg.opacity(0.85) }),
+                    .text_color(icon_color.unwrap_or(if active { cx.theme().foreground } else { fg.opacity(0.85) })),
             )
             .child(div().flex_1().truncate().child(label))
             .when_some(badge, |this, b| {
@@ -456,7 +457,7 @@ impl RouterApp {
         let border = cx.theme().sidebar_border;
 
         v_flex()
-            .w(px(200.))
+            .w(px(210.))
             .h_full()
             .flex_shrink_0()
             .p(px(8.))
@@ -466,6 +467,7 @@ impl RouterApp {
             .child(self.nav_item(
                 "nav-dashboard",
                 IconName::LayoutDashboard,
+                Some(rgb(0x3B82F6).into()), // Blue
                 "仪表盘",
                 Route::Dashboard,
                 None,
@@ -475,6 +477,7 @@ impl RouterApp {
             .child(self.nav_item(
                 "nav-codex",
                 CustomIcon::OpenAI,
+                Some(rgb(0x10A37F).into()), // OpenAI Emerald Green
                 "Codex",
                 Route::Codex,
                 Some(format!("{count}")),
@@ -484,6 +487,7 @@ impl RouterApp {
             .child(self.nav_item(
                 "nav-claude",
                 CustomIcon::Claude,
+                Some(rgb(0xD97757).into()), // Claude Terracotta Orange
                 "Claude Code",
                 Route::Claude,
                 Some("即将支持".into()),
@@ -493,6 +497,7 @@ impl RouterApp {
             .child(self.nav_item(
                 "nav-grok",
                 CustomIcon::Grok,
+                Some(rgb(0x8B5CF6).into()), // xAI Violet
                 "Grok Build",
                 Route::Grok,
                 Some("即将支持".into()),
@@ -503,6 +508,7 @@ impl RouterApp {
             .child(self.nav_item(
                 "nav-notifications",
                 IconName::Bell,
+                Some(rgb(0xF59E0B).into()), // Amber
                 "系统通知",
                 Route::Notifications,
                 if self.logs.len() > 1 {
@@ -523,6 +529,7 @@ impl RouterApp {
             .child(self.nav_item(
                 "nav-settings",
                 IconName::Settings,
+                Some(rgb(0x64748B).into()), // Slate
                 "偏好设置",
                 Route::Settings,
                 None,
@@ -548,7 +555,7 @@ impl RouterApp {
     }
 
     fn render_chrome(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let left_pad = if cfg!(target_os = "macos") { 108. } else { 16. };
+        let left_pad = if cfg!(target_os = "macos") { 96. } else { 16. };
 
         h_flex()
             .absolute()
@@ -877,69 +884,10 @@ impl RouterApp {
 
     fn render_codex_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filtered = self.filtered_providers(cx);
-        let count = self.providers.len();
-        let filtered_count = filtered.len();
 
         v_flex()
             .w_full()
-            .gap(px(16.))
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        v_flex()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .text_size(px(28.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(cx.theme().foreground)
-                                    .child("Codex 供应商管理"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(format!("共 {} 个供应商，筛选出 {} 个", count, filtered_count)),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .w(px(220.))
-                                    .child(
-                                        Input::new(&self.search_input)
-                                            .cleanable(true)
-                                            .prefix(IconName::Search),
-                                    ),
-                            )
-                            .child(
-                                Button::new("import-live-btn")
-                                    .outline()
-                                    .small()
-                                    .icon(IconName::FolderOpen)
-                                    .label("导入 Live")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.import_live(window, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("add-provider-btn")
-                                    .primary()
-                                    .small()
-                                    .icon(IconName::Plus)
-                                    .label("新建供应商")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_create_form(window, cx);
-                                    })),
-                            ),
-                    ),
-            )
+            .gap(px(12.))
             .child(
                 if self.providers.is_empty() {
                     empty_state(cx).into_any_element()
@@ -952,6 +900,40 @@ impl RouterApp {
                         .children(filtered.iter().map(|provider| {
                             self.provider_card(provider, cx)
                         }))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .justify_center()
+                                .gap(px(12.))
+                                .py(px(12.))
+                                .rounded(px(12.))
+                                .border_1()
+                                .border_dashed()
+                                .border_color(cx.theme().sidebar_border)
+                                .text_size(px(13.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    Button::new("codex-add-bottom")
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::Plus)
+                                        .label("新建供应商")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.open_create_form(window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("codex-import-bottom")
+                                        .ghost()
+                                        .small()
+                                        .icon(IconName::FolderOpen)
+                                        .label("从 Live 导入")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.import_live(window, cx);
+                                        })),
+                                ),
+                        )
                         .into_any_element()
                 },
             )
