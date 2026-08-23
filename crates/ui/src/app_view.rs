@@ -12,7 +12,6 @@ use gpui::{
 use gpui_component::{
     alert::Alert,
     button::{Button, ButtonVariants as _},
-    divider::Divider,
     h_flex,
     input::{Input, InputState},
     notification::Notification,
@@ -165,6 +164,9 @@ impl RouterApp {
     }
 
     fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
+        if self.route != route {
+            self.form = None;
+        }
         self.route = route;
         cx.notify();
     }
@@ -1353,102 +1355,7 @@ impl RouterApp {
             )
     }
 
-    fn form_body(&self, view: Entity<Self>, cx: &App) -> impl IntoElement {
-        let Some(form) = self.form.as_ref() else {
-            return div().child("表单已关闭").into_any_element();
-        };
-        let theme = cx.theme();
-        let official = form.kind.is_official();
-
-        v_flex()
-            .w_full()
-            .gap(px(12.))
-            .child(
-                v_flex()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.foreground)
-                            .child("选择预设供应商模版（支持搜索）："),
-                    )
-                    .child(
-                        Select::new(&form.preset_select)
-                            .placeholder("从预设模版快速填充 (如 DeepSeek, Kimi, 阿里百炼...)")
-                            .search_placeholder("搜索预设模版...")
-                            .cleanable(true),
-                    ),
-            )
-            .child(Divider::horizontal())
-            .child(
-                v_flex()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.foreground)
-                            .child("协议类型："),
-                    )
-                    .child(
-                        h_flex()
-                            .gap(px(6.))
-                            .child({
-                                let view = view.clone();
-                                Button::new("kind-official")
-                                    .outline()
-                                    .small()
-                                    .label("OpenAI 官方 (ChatGPT OAuth)")
-                                    .selected(official)
-                                    .on_click(move |_, _, cx| {
-                                        view.update(cx, |this, cx| {
-                                            this.set_form_kind(CodexKind::Official, cx)
-                                        });
-                                    })
-                            })
-                            .child({
-                                let view = view.clone();
-                                Button::new("kind-third-party")
-                                    .outline()
-                                    .small()
-                                    .label("Responses 第三方 (API Key)")
-                                    .selected(!official)
-                                    .on_click(move |_, _, cx| {
-                                        view.update(cx, |this, cx| {
-                                            this.set_form_kind(CodexKind::ResponsesThirdParty, cx)
-                                        });
-                                    })
-                            }),
-                    ),
-            )
-            .child(form_field("供应商名称", Input::new(&form.name)))
-            .child(form_field("供应商官网 (可选)", Input::new(&form.website_url).cleanable(true)))
-            .when(!official, |this| {
-                this.child(form_field(
-                    "API Key (OPENAI_API_KEY)",
-                    Input::new(&form.api_key).mask_toggle(),
-                ))
-                .child(form_field("API 端点 (Base URL)", Input::new(&form.base_url)))
-                .child(form_field("模型名称 (Model)", Input::new(&form.model)))
-            })
-            .child(
-                if official {
-                    Alert::info(
-                        "form-official-notice",
-                        "官方供应商启用时仅整理 config.toml，不修改 ChatGPT OAuth 凭证。未登录时请在终端运行 codex login。",
-                    )
-                } else {
-                    Alert::info(
-                        "form-custom-notice",
-                        "第三方供应商将以 responses 协议写入 ~/.codex/config.toml 并写入 OPENAI_API_KEY。",
-                    )
-                },
-            )
-            .into_any_element()
-    }
-
-    fn render_form_modal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_form_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(form) = self.form.as_ref() else {
             return div().into_any_element();
         };
@@ -1459,82 +1366,72 @@ impl RouterApp {
         } else {
             "新建 Codex 供应商"
         };
-        let view = cx.entity();
-        let view_for_body = view.clone();
+        let subtitle = if is_editing {
+            "修改供应商的接口端点、模型名称与认证凭证"
+        } else {
+            "从预设模版快速创建或手动填写第三方 Responses API 供应商"
+        };
         let theme = cx.theme();
+        let official = form.kind.is_official();
+        let view = cx.entity();
 
-        div()
-            .id("form-modal-backdrop")
-            .absolute()
-            .inset_0()
-            .bg(gpui::hsla(0., 0., 0., 0.5))
-            .flex()
-            .items_center()
-            .justify_center()
-            .p(px(20.))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.form = None;
-                cx.notify();
-            }))
+        v_flex()
+            .w_full()
+            .gap(px(16.))
             .child(
-                div()
-                    .id("form-modal-container")
-                    .w(px(520.))
-                    .max_h(px(580.))
-                    .bg(theme.background)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded(px(14.))
-                    .shadow_lg()
-                    .p(px(20.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(16.))
-                    .on_click(|_, _, cx| {
-                        cx.stop_propagation();
-                    })
+                // Header bar with breadcrumbs / back button and actions
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
                     .child(
                         h_flex()
-                            .w_full()
                             .items_center()
-                            .justify_between()
+                            .gap(px(8.))
                             .child(
-                                div()
-                                    .text_size(px(16.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(theme.foreground)
-                                    .child(title),
-                            )
-                            .child(
-                                Button::new("close-form")
+                                Button::new("back-btn")
                                     .ghost()
-                                    .xsmall()
-                                    .icon(IconName::Close)
+                                    .small()
+                                    .icon(IconName::ChevronLeft)
+                                    .label("返回")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.form = None;
                                         cx.notify();
                                     })),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(theme.muted_foreground)
+                                    .child("/"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.muted_foreground)
+                                    .child("Codex 供应商"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .text_color(theme.muted_foreground)
+                                    .child("/"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.foreground)
+                                    .child(title),
                             ),
                     )
                     .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .pr(px(4.))
-                            .child(self.form_body(view_for_body, cx)),
-                    )
-                    .child(
                         h_flex()
-                            .w_full()
                             .items_center()
-                            .justify_end()
-                            .gap(px(10.))
-                            .pt(px(10.))
-                            .border_t_1()
-                            .border_color(theme.border)
+                            .gap(px(8.))
                             .child(
-                                Button::new("cancel-form")
+                                Button::new("cancel-page-btn")
                                     .outline()
                                     .small()
                                     .label("取消")
@@ -1544,9 +1441,10 @@ impl RouterApp {
                                     })),
                             )
                             .child(
-                                Button::new("submit-form")
+                                Button::new("save-page-btn")
                                     .primary()
                                     .small()
+                                    .icon(IconName::Check)
                                     .label("保存配置")
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.submit_form(window, cx);
@@ -1554,20 +1452,171 @@ impl RouterApp {
                             ),
                     ),
             )
-            .into_any_element()
+            .child(
+                v_flex()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(22.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(theme.foreground)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(theme.muted_foreground)
+                            .child(subtitle),
+                    ),
+            )
+            .child(
+                // Preset Template Selection Card
+                theme::tile(cx).child(
+                    v_flex()
+                        .w_full()
+                        .gap(px(10.))
+                        .child(theme::tile_label("PRESET TEMPLATE / 快速选择预设模版", cx))
+                        .child(
+                            Select::new(&form.preset_select)
+                                .placeholder("从预设模版快速填充 (如 DeepSeek, Kimi, 阿里百炼...)")
+                                .search_placeholder("搜索预设模版...")
+                                .cleanable(true),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(theme.muted_foreground)
+                                .child("💡 提示：选择预设模版会自动为您填入官方端点、推荐模型及官网链接。"),
+                        ),
+                ),
+            )
+            .child(
+                // Basic Configuration Card
+                theme::tile(cx).child(
+                    v_flex()
+                        .w_full()
+                        .gap(px(12.))
+                        .child(theme::tile_label("BASIC CONFIGURATION / 基础配置", cx))
+                        .child(
+                            v_flex()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.foreground)
+                                        .child("协议类型："),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap(px(8.))
+                                        .child({
+                                            let view = view.clone();
+                                            Button::new("kind-official")
+                                                .outline()
+                                                .small()
+                                                .label("OpenAI 官方 (ChatGPT OAuth)")
+                                                .selected(official)
+                                                .on_click(move |_, _, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    this.set_form_kind(CodexKind::Official, cx)
+                                                });
+                                            })
+                                    })
+                                    .child({
+                                        let view = view.clone();
+                                        Button::new("kind-third-party")
+                                            .outline()
+                                            .small()
+                                            .label("Responses 第三方 (API Key)")
+                                            .selected(!official)
+                                            .on_click(move |_, _, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    this.set_form_kind(CodexKind::ResponsesThirdParty, cx)
+                                                });
+                                            })
+                                    }),
+                            ),
+                    )
+                    .child(form_field("供应商名称", Input::new(&form.name)))
+                    .child(form_field("供应商官网 (可选)", Input::new(&form.website_url).cleanable(true))),
+            ),
+        )
+        .child(
+            // API Credentials & Endpoint Card
+            theme::tile(cx).child(
+                v_flex()
+                    .w_full()
+                    .gap(px(12.))
+                    .child(theme::tile_label("API CREDENTIALS & ENDPOINT / 接口凭证与模型", cx))
+                    .when(!official, |this| {
+                        this.child(form_field(
+                            "API Key (OPENAI_API_KEY)",
+                            Input::new(&form.api_key).mask_toggle(),
+                        ))
+                        .child(form_field("API 端点 (Base URL)", Input::new(&form.base_url)))
+                        .child(form_field("模型名称 (Model)", Input::new(&form.model)))
+                    })
+                    .child(
+                        if official {
+                            Alert::info(
+                                "form-official-notice",
+                                "官方供应商启用时仅整理 config.toml，不修改 ChatGPT OAuth 凭证。未登录时请在终端运行 codex login。",
+                            )
+                        } else {
+                            Alert::info(
+                                "form-custom-notice",
+                                "第三方供应商将以 responses 协议写入 ~/.codex/config.toml 并写入 OPENAI_API_KEY。",
+                            )
+                        },
+                    ),
+            ),
+        )
+        .child(
+            // Bottom Action Buttons
+            h_flex()
+                .w_full()
+                .justify_end()
+                .gap(px(10.))
+                .pt(px(8.))
+                .pb(px(24.))
+                .child(
+                    Button::new("bottom-cancel-btn")
+                        .outline()
+                        .label("取消")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.form = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("bottom-save-btn")
+                        .primary()
+                        .icon(IconName::Check)
+                        .label("保存供应商配置")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.submit_form(window, cx);
+                        })),
+                ),
+        )
+        .into_any_element()
     }
 }
 
 impl Render for RouterApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dark = cx.theme().is_dark();
-        let page = match self.route {
-            Route::Dashboard => self.render_dashboard_page(cx).into_any_element(),
-            Route::Codex => self.render_codex_page(cx).into_any_element(),
-            Route::Claude => self.render_codex_page(cx).into_any_element(),
-            Route::Grok => self.render_codex_page(cx).into_any_element(),
-            Route::Notifications => self.render_notifications_page(cx).into_any_element(),
-            Route::Settings => self.render_settings_page(cx).into_any_element(),
+        let page = if self.form.is_some() {
+            self.render_form_page(cx).into_any_element()
+        } else {
+            match self.route {
+                Route::Dashboard => self.render_dashboard_page(cx).into_any_element(),
+                Route::Codex => self.render_codex_page(cx).into_any_element(),
+                Route::Claude => self.render_codex_page(cx).into_any_element(),
+                Route::Grok => self.render_codex_page(cx).into_any_element(),
+                Route::Notifications => self.render_notifications_page(cx).into_any_element(),
+                Route::Settings => self.render_settings_page(cx).into_any_element(),
+            }
         };
 
         div()
@@ -1620,9 +1669,6 @@ impl Render for RouterApp {
                     )
                     .child(self.render_chrome(window, cx)),
             )
-            .when(self.form.is_some(), |this| {
-                this.child(self.render_form_modal(cx))
-            })
             .children(gpui_component::Root::render_dialog_layer(window, cx))
             .children(gpui_component::Root::render_sheet_layer(window, cx))
             .children(gpui_component::Root::render_notification_layer(window, cx))
