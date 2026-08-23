@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/domain",
     "crates/adapters-codex",
+    "crates/adapters-claude",
+    "crates/adapters-grok",
     "crates/store",
     "crates/session",
     "crates/ui",
@@ -18,6 +20,8 @@ authors = ["router-switch"]
 [workspace.dependencies]
 domain = { path = "crates/domain" }
 adapters-codex = { path = "crates/adapters-codex" }
+adapters-claude = { path = "crates/adapters-claude" }
+adapters-grok = { path = "crates/adapters-grok" }
 store = { path = "crates/store" }
 session = { path = "crates/session" }
 ui = { path = "crates/ui" }

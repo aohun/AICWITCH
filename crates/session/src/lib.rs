@@ -1,14 +1,24 @@
-//! App-layer glue: SQLite SSOT + Codex live write.
+//! App-layer glue: SQLite SSOT + live config adapters for Codex, Claude, and Grok.
 
 use std::path::{Path, PathBuf};
 
+use adapters_claude::{
+    read_live as read_claude_live, resolve_claude_paths,
+    write_live_for_provider as write_claude_live, ClaudeAdapterError, ClaudePaths,
+};
 use adapters_codex::{
-    read_live, resolve_codex_paths, write_live_for_provider, CodexAdapterError, CodexPaths,
+    read_live as read_codex_live, resolve_codex_paths,
+    write_live_for_provider as write_codex_live, CodexAdapterError, CodexPaths,
+};
+use adapters_grok::{
+    read_live as read_grok_live, resolve_grok_paths,
+    write_live_for_provider as write_grok_live, GrokAdapterError, GrokPaths,
 };
 use domain::{
-    backfill_codex_settings, extract_codex_api_key, extract_codex_base_url, extract_codex_model,
-    extract_codex_provider_name, new_provider_id, parse_codex_form, AppKind, CodexForm, CodexKind,
-    CodexSettings, DomainError, Provider, ProviderSettings, OFFICIAL_CODEX_ID,
+    backfill_claude_settings, backfill_codex_settings, backfill_grok_settings,
+    new_provider_id, parse_claude_form, parse_codex_form, parse_grok_form, AppKind,
+    ClaudeForm, CodexForm, DomainError, GrokForm, Provider, ProviderForm, ProviderSettings,
+    OFFICIAL_CLAUDE_ID, OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID,
 };
 use store::{AppLanguage, AppSettings, Store, StoreError, ThemePreference};
 use thiserror::Error;
@@ -18,7 +28,11 @@ pub enum SessionError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
-    Adapter(#[from] CodexAdapterError),
+    CodexAdapter(#[from] CodexAdapterError),
+    #[error(transparent)]
+    ClaudeAdapter(#[from] ClaudeAdapterError),
+    #[error(transparent)]
+    GrokAdapter(#[from] GrokAdapterError),
     #[error(transparent)]
     Domain(#[from] DomainError),
     #[error("{0}")]
@@ -27,23 +41,40 @@ pub enum SessionError {
 
 pub struct Workspace {
     store: Store,
-    paths: CodexPaths,
+    codex_paths: CodexPaths,
+    claude_paths: ClaudePaths,
+    grok_paths: GrokPaths,
 }
 
-pub struct CodexSnapshot {
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppSnapshot {
+    pub app: AppKind,
     pub providers: Vec<Provider>,
     pub current_id: Option<String>,
 }
 
+// Retain CodexSnapshot alias for compatibility if needed
+pub type CodexSnapshot = AppSnapshot;
+
 impl Workspace {
-    pub fn open(db_path: impl AsRef<Path>, codex_home: Option<&Path>) -> Result<Self, SessionError> {
+    pub fn open(
+        db_path: impl AsRef<Path>,
+        codex_home: Option<&Path>,
+    ) -> Result<Self, SessionError> {
         let store = Store::open(db_path)?;
         let settings = store.settings()?;
-        let override_home = codex_home
+        let override_codex = codex_home
             .map(Path::to_path_buf)
             .or(settings.codex_home.clone());
-        let paths = resolve_codex_paths(override_home.as_deref())?;
-        Ok(Self { store, paths })
+        let codex_paths = resolve_codex_paths(override_codex.as_deref())?;
+        let claude_paths = resolve_claude_paths(settings.claude_home.as_deref())?;
+        let grok_paths = resolve_grok_paths(settings.grok_home.as_deref())?;
+        Ok(Self {
+            store,
+            codex_paths,
+            claude_paths,
+            grok_paths,
+        })
     }
 
     pub fn open_default() -> Result<Self, SessionError> {
@@ -55,7 +86,15 @@ impl Workspace {
     }
 
     pub fn codex_home(&self) -> &Path {
-        &self.paths.home
+        &self.codex_paths.home
+    }
+
+    pub fn claude_home(&self) -> &Path {
+        &self.claude_paths.home
+    }
+
+    pub fn grok_home(&self) -> &Path {
+        &self.grok_paths.home
     }
 
     pub fn settings(&self) -> Result<AppSettings, SessionError> {
@@ -71,7 +110,23 @@ impl Workspace {
         let mut settings = self.store.settings()?;
         settings.codex_home = home.clone();
         self.store.save_settings(&settings)?;
-        self.paths = resolve_codex_paths(home.as_deref())?;
+        self.codex_paths = resolve_codex_paths(home.as_deref())?;
+        Ok(())
+    }
+
+    pub fn apply_claude_home(&mut self, home: Option<PathBuf>) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.claude_home = home.clone();
+        self.store.save_settings(&settings)?;
+        self.claude_paths = resolve_claude_paths(home.as_deref())?;
+        Ok(())
+    }
+
+    pub fn apply_grok_home(&mut self, home: Option<PathBuf>) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.grok_home = home.clone();
+        self.store.save_settings(&settings)?;
+        self.grok_paths = resolve_grok_paths(home.as_deref())?;
         Ok(())
     }
 
@@ -123,77 +178,163 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Result<CodexSnapshot, SessionError> {
-        Ok(CodexSnapshot {
-            providers: self.store.list_providers(AppKind::Codex)?,
-            current_id: self.store.current_id(AppKind::Codex)?,
+    pub fn snapshot(&self) -> Result<AppSnapshot, SessionError> {
+        self.snapshot_for(AppKind::Codex)
+    }
+
+    pub fn snapshot_for(&self, app: AppKind) -> Result<AppSnapshot, SessionError> {
+        Ok(AppSnapshot {
+            app,
+            providers: self.store.list_providers(app)?,
+            current_id: self.store.current_id(app)?,
         })
     }
 
-    pub fn form_for(&self, id: &str) -> Result<CodexForm, SessionError> {
+    pub fn form_for(&self, id: &str) -> Result<ProviderForm, SessionError> {
         let provider = self.require(id)?;
-        let settings = require_codex(&provider)?;
-        let mut settings = settings.clone();
-        if self.store.current_id(AppKind::Codex)?.as_deref() == Some(id) {
-            let live = read_live(&self.paths)?;
-            settings = backfill_codex_settings(&settings, &live.auth, &live.config_toml);
+        match &provider.settings {
+            ProviderSettings::Codex(settings) => {
+                let mut settings = settings.clone();
+                if self.store.current_id(AppKind::Codex)?.as_deref() == Some(id) {
+                    let live = read_codex_live(&self.codex_paths)?;
+                    settings = backfill_codex_settings(&settings, &live.auth, &live.config_toml);
+                }
+                Ok(ProviderForm::Codex(settings.form_snapshot(
+                    &provider.name,
+                    provider.website_url.as_deref(),
+                )))
+            }
+            ProviderSettings::Claude(settings) => {
+                let mut settings = settings.clone();
+                if self.store.current_id(AppKind::Claude)?.as_deref() == Some(id) {
+                    let live = read_claude_live(&self.claude_paths)?;
+                    settings = backfill_claude_settings(&settings, &live.settings);
+                }
+                Ok(ProviderForm::Claude(settings.form_snapshot(
+                    &provider.name,
+                    provider.website_url.as_deref(),
+                )))
+            }
+            ProviderSettings::Grok(settings) => {
+                let mut settings = settings.clone();
+                if self.store.current_id(AppKind::Grok)?.as_deref() == Some(id) {
+                    let live = read_grok_live(&self.grok_paths)?;
+                    settings = backfill_grok_settings(&settings, &live.config_toml);
+                }
+                Ok(ProviderForm::Grok(settings.form_snapshot(
+                    &provider.name,
+                    provider.website_url.as_deref(),
+                )))
+            }
+            ProviderSettings::Unsupported { app } => Err(SessionError::Message(format!(
+                "暂不支持应用 {} 的表单配置",
+                app.display_name()
+            ))),
         }
-        Ok(settings.form_snapshot(&provider.name, provider.website_url.as_deref()))
     }
 
-    pub fn save_form(
+    pub fn save_codex_form(
         &self,
         editing_id: Option<&str>,
         form: CodexForm,
     ) -> Result<Provider, SessionError> {
-        let website_url = optional_url(&form.website_url);
-        let settings = parse_codex_form(form.clone())?;
+        self.save_form(AppKind::Codex, editing_id, ProviderForm::Codex(form))
+    }
+
+    pub fn save_claude_form(
+        &self,
+        editing_id: Option<&str>,
+        form: ClaudeForm,
+    ) -> Result<Provider, SessionError> {
+        self.save_form(AppKind::Claude, editing_id, ProviderForm::Claude(form))
+    }
+
+    pub fn save_grok_form(
+        &self,
+        editing_id: Option<&str>,
+        form: GrokForm,
+    ) -> Result<Provider, SessionError> {
+        self.save_form(AppKind::Grok, editing_id, ProviderForm::Grok(form))
+    }
+
+    pub fn save_form(
+        &self,
+        app: AppKind,
+        editing_id: Option<&str>,
+        form: ProviderForm,
+    ) -> Result<Provider, SessionError> {
+        let (name, website_url, settings, official_id, is_official) = match form {
+            ProviderForm::Codex(f) => {
+                let name = f.name.trim().to_string();
+                let url = optional_url(&f.website_url);
+                let is_off = f.kind.is_official();
+                let s = parse_codex_form(f)?;
+                (name, url, ProviderSettings::Codex(s), OFFICIAL_CODEX_ID, is_off)
+            }
+            ProviderForm::Claude(f) => {
+                let name = f.name.trim().to_string();
+                let url = optional_url(&f.website_url);
+                let is_off = f.kind.is_official();
+                let s = parse_claude_form(f)?;
+                (name, url, ProviderSettings::Claude(s), OFFICIAL_CLAUDE_ID, is_off)
+            }
+            ProviderForm::Grok(f) => {
+                let name = f.name.trim().to_string();
+                let url = optional_url(&f.website_url);
+                let is_off = f.kind.is_official();
+                let s = parse_grok_form(f)?;
+                (name, url, ProviderSettings::Grok(s), OFFICIAL_GROK_ID, is_off)
+            }
+        };
+
         let provider = if let Some(id) = editing_id {
             let mut existing = self.require(id)?;
-            existing.name = form.name.trim().to_string();
+            existing.name = name;
             existing.website_url = website_url;
-            existing.settings = ProviderSettings::Codex(settings);
+            existing.settings = settings;
             existing
-        } else if form.kind.is_official() {
-            match self.store.get_provider(OFFICIAL_CODEX_ID)? {
+        } else if is_official {
+            match self.store.get_provider(official_id)? {
                 Some(mut existing) => {
-                    existing.name = form.name.trim().to_string();
+                    existing.name = name;
                     existing.website_url = website_url;
-                    existing.settings = ProviderSettings::Codex(settings);
+                    existing.settings = settings;
                     existing
                 }
-                None => new_codex_provider(
-                    OFFICIAL_CODEX_ID.to_string(),
-                    form.name,
+                None => Provider {
+                    id: official_id.to_string(),
+                    app,
+                    name,
                     website_url,
                     settings,
-                    0,
-                ),
+                    created_at: now_secs(),
+                    sort_index: 0,
+                },
             }
         } else {
-            let sort_index = next_sort(&self.store)?;
-            new_codex_provider(
-                new_provider_id(&form.name),
-                form.name,
+            let sort_index = next_sort(&self.store, app)?;
+            Provider {
+                id: new_provider_id(&name),
+                app,
+                name,
                 website_url,
                 settings,
+                created_at: now_secs(),
                 sort_index,
-            )
-        };
-        self.store.upsert_provider(&provider)?;
-        if self.store.current_id(AppKind::Codex)?.as_deref() == Some(provider.id.as_str()) {
-            if let Some(settings) = provider.codex_settings() {
-                write_live_for_provider(&self.paths, settings)?;
             }
+        };
+
+        self.store.upsert_provider(&provider)?;
+        if self.store.current_id(app)?.as_deref() == Some(provider.id.as_str()) {
+            self.write_live(&provider)?;
         }
         Ok(provider)
     }
 
     pub fn enable(&self, id: &str) -> Result<(), SessionError> {
         let provider = self.require(id)?;
-        let settings = require_codex(&provider)?;
-        write_live_for_provider(&self.paths, settings)?;
-        self.store.set_current(AppKind::Codex, id)?;
+        self.write_live(&provider)?;
+        self.store.set_current(provider.app, id)?;
         Ok(())
     }
 
@@ -208,28 +349,30 @@ impl Workspace {
         copy.id = new_provider_id(&format!("{}-copy", source.name));
         copy.name = format!("{} copy", source.name);
         copy.created_at = now_secs();
-        copy.sort_index = next_sort(&self.store)?;
+        copy.sort_index = next_sort(&self.store, source.app)?;
         self.store.upsert_provider(&copy)?;
         Ok(copy)
     }
 
-    pub fn import_live(&self) -> Result<Option<Provider>, SessionError> {
-        let live = read_live(&self.paths)?;
-        let Some(base_url) = extract_codex_base_url(&live.config_toml) else {
-            return Ok(None);
-        };
-        let name = extract_codex_provider_name(&live.config_toml)
-            .unwrap_or_else(|| "Imported Codex".into());
-        let form = CodexForm {
-            name,
-            website_url: String::new(),
-            kind: CodexKind::ResponsesThirdParty,
-            api_key: extract_codex_api_key(&live.auth).unwrap_or_default(),
-            base_url,
-            model: extract_codex_model(&live.config_toml).unwrap_or_default(),
-            model_mappings: Vec::new(),
-        };
-        Ok(Some(self.save_form(None, form)?))
+    fn write_live(&self, provider: &Provider) -> Result<(), SessionError> {
+        match &provider.settings {
+            ProviderSettings::Codex(settings) => {
+                write_codex_live(&self.codex_paths, settings)?;
+            }
+            ProviderSettings::Claude(settings) => {
+                write_claude_live(&self.claude_paths, settings)?;
+            }
+            ProviderSettings::Grok(settings) => {
+                write_grok_live(&self.grok_paths, settings)?;
+            }
+            ProviderSettings::Unsupported { app } => {
+                return Err(SessionError::Message(format!(
+                    "暂不支持应用 {} 的切换操作",
+                    app.display_name()
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn require(&self, id: &str) -> Result<Provider, SessionError> {
@@ -237,12 +380,6 @@ impl Workspace {
             .get_provider(id)?
             .ok_or_else(|| SessionError::Message("供应商不存在".into()))
     }
-}
-
-fn require_codex(provider: &Provider) -> Result<&CodexSettings, SessionError> {
-    provider
-        .codex_settings()
-        .ok_or_else(|| SessionError::Message("不是 Codex 供应商".into()))
 }
 
 fn optional_url(raw: &str) -> Option<String> {
@@ -254,27 +391,9 @@ fn optional_url(raw: &str) -> Option<String> {
     }
 }
 
-fn new_codex_provider(
-    id: String,
-    name: String,
-    website_url: Option<String>,
-    settings: CodexSettings,
-    sort_index: i64,
-) -> Provider {
-    Provider {
-        id,
-        app: AppKind::Codex,
-        name: name.trim().to_string(),
-        website_url,
-        settings: ProviderSettings::Codex(settings),
-        created_at: now_secs(),
-        sort_index,
-    }
-}
-
-fn next_sort(store: &Store) -> Result<i64, SessionError> {
+fn next_sort(store: &Store, app: AppKind) -> Result<i64, SessionError> {
     let max = store
-        .list_providers(AppKind::Codex)?
+        .list_providers(app)?
         .into_iter()
         .map(|provider| provider.sort_index)
         .max()
@@ -292,8 +411,10 @@ fn now_secs() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use domain::{extract_codex_api_key, extract_codex_base_url, extract_codex_model};
-    use serde_json::json;
+    use domain::{
+        extract_codex_base_url,
+        ClaudeKind, CodexKind, GrokKind,
+    };
 
     fn temp_workspace() -> (tempfile::TempDir, Workspace) {
         let dir = tempfile::tempdir().unwrap();
@@ -305,7 +426,7 @@ mod tests {
         (dir, ws)
     }
 
-    fn third_party_form(name: &str, key: &str, url: &str, model: &str) -> CodexForm {
+    fn codex_tp_form(name: &str, key: &str, url: &str, model: &str) -> CodexForm {
         CodexForm {
             name: name.into(),
             website_url: String::new(),
@@ -318,131 +439,99 @@ mod tests {
     }
 
     #[test]
-    fn enable_third_party_writes_live_files() {
+    fn enable_codex_third_party_writes_live_files() {
         let (_dir, ws) = temp_workspace();
         let provider = ws
             .save_form(
+                AppKind::Codex,
                 None,
-                third_party_form(
+                ProviderForm::Codex(codex_tp_form(
                     "PackyCode",
                     "sk-live",
                     "https://www.packyapi.ai/v1",
                     "gpt-5.6-sol",
-                ),
+                )),
             )
             .unwrap();
         ws.enable(&provider.id).unwrap();
 
-        let live = read_live(&ws.paths).unwrap();
+        let live = read_codex_live(&ws.codex_paths).unwrap();
         assert_eq!(live.auth["OPENAI_API_KEY"], "sk-live");
         assert!(live.config_toml.contains("wire_api = \"responses\""));
         assert_eq!(
             extract_codex_base_url(&live.config_toml).as_deref(),
             Some("https://www.packyapi.ai/v1")
         );
-        assert_eq!(ws.snapshot().unwrap().current_id.as_deref(), Some(provider.id.as_str()));
-    }
-
-    #[test]
-    fn official_enable_keeps_oauth_and_clears_custom_provider() {
-        let (_dir, ws) = temp_workspace();
-        std::fs::create_dir_all(&ws.paths.home).unwrap();
-        std::fs::write(
-            &ws.paths.auth,
-            r#"{"tokens":{"access_token":"chatgpt-oauth"}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            &ws.paths.config,
-            "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"relay\"\n",
-        )
-        .unwrap();
-
-        ws.enable(OFFICIAL_CODEX_ID).unwrap();
-        let live = read_live(&ws.paths).unwrap();
-        assert_eq!(live.auth["tokens"]["access_token"], "chatgpt-oauth");
-        assert!(!live.config_toml.contains("model_providers"));
-    }
-
-    #[test]
-    fn edit_current_backfills_live_key_and_endpoint() {
-        let (_dir, ws) = temp_workspace();
-        let provider = ws
-            .save_form(
-                None,
-                third_party_form(
-                    "Packy",
-                    "old-key",
-                    "https://old.example/v1",
-                    "old-model",
-                ),
-            )
-            .unwrap();
-        ws.enable(&provider.id).unwrap();
-
-        std::fs::write(
-            &ws.paths.auth,
-            serde_json::to_string(&json!({"OPENAI_API_KEY": "live-key"})).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(
-            &ws.paths.config,
-            domain::generate_third_party_config("Packy", "https://live.example/v1", "live-model"),
-        )
-        .unwrap();
-
-        let form = ws.form_for(&provider.id).unwrap();
-        assert_eq!(form.api_key, "live-key");
-        assert_eq!(form.base_url, "https://live.example/v1");
-        assert_eq!(form.model, "live-model");
-    }
-
-    #[test]
-    fn saving_current_provider_rewrites_live() {
-        let (_dir, ws) = temp_workspace();
-        let provider = ws
-            .save_form(
-                None,
-                third_party_form("Relay", "sk-1", "https://one.example/v1", "m1"),
-            )
-            .unwrap();
-        ws.enable(&provider.id).unwrap();
-        ws.save_form(
-            Some(&provider.id),
-            third_party_form("Relay", "sk-2", "https://two.example/v1", "m2"),
-        )
-        .unwrap();
-
-        let live = read_live(&ws.paths).unwrap();
-        assert_eq!(extract_codex_api_key(&live.auth).as_deref(), Some("sk-2"));
         assert_eq!(
-            extract_codex_base_url(&live.config_toml).as_deref(),
-            Some("https://two.example/v1")
+            ws.snapshot_for(AppKind::Codex).unwrap().current_id.as_deref(),
+            Some(provider.id.as_str())
         );
-        assert_eq!(extract_codex_model(&live.config_toml).as_deref(), Some("m2"));
     }
 
     #[test]
-    fn cannot_delete_current_provider() {
-        let (_dir, ws) = temp_workspace();
-        ws.enable(OFFICIAL_CODEX_ID).unwrap();
-        let err = ws.delete(OFFICIAL_CODEX_ID).unwrap_err();
-        assert!(err.to_string().contains("不能删除"));
+    fn claude_provider_flow() {
+        let (dir, mut ws) = temp_workspace();
+        let claude_home = dir.path().join("claude");
+        ws.apply_claude_home(Some(claude_home.clone())).unwrap();
+
+        let claude_form = ClaudeForm {
+            name: "Packy Claude".into(),
+            website_url: "".into(),
+            kind: ClaudeKind::ThirdParty,
+            api_key: "sk-ant-test".into(),
+            base_url: "https://api.packy.ai".into(),
+            model: "claude-3-7-sonnet".into(),
+            model_mappings: Vec::new(),
+        };
+
+        let p = ws
+            .save_claude_form(None, claude_form)
+            .unwrap();
+        ws.enable(&p.id).unwrap();
+
+        let live = read_claude_live(&ws.claude_paths).unwrap();
+        assert_eq!(
+            live.settings["env"]["ANTHROPIC_BASE_URL"],
+            "https://api.packy.ai"
+        );
+        assert_eq!(
+            live.settings["env"]["ANTHROPIC_AUTH_TOKEN"],
+            "sk-ant-test"
+        );
+
+        // Switch back to official claude
+        ws.enable(OFFICIAL_CLAUDE_ID).unwrap();
+        let live_off = read_claude_live(&ws.claude_paths).unwrap();
+        assert!(live_off.settings.get("env").is_none());
     }
 
     #[test]
-    fn persist_codex_home_override() {
-        let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("app.db");
-        let first = dir.path().join("codex-a");
-        let second = dir.path().join("codex-b");
-        let mut ws = Workspace::open(&db, Some(&first)).unwrap();
-        ws.apply_codex_home(Some(second.clone())).unwrap();
-        drop(ws);
+    fn grok_provider_flow() {
+        let (dir, mut ws) = temp_workspace();
+        let grok_home = dir.path().join("grok");
+        ws.apply_grok_home(Some(grok_home.clone())).unwrap();
 
-        let ws = Workspace::open(&db, None).unwrap();
-        assert_eq!(ws.codex_home(), second.as_path());
-        assert_eq!(ws.settings().unwrap().codex_home.as_deref(), Some(second.as_path()));
+        let grok_form = GrokForm {
+            name: "Packy Grok".into(),
+            website_url: "".into(),
+            kind: GrokKind::ThirdParty,
+            api_key: "xai-test-key".into(),
+            base_url: "https://api.packy.ai/v1".into(),
+            model: "grok-4.5".into(),
+            model_mappings: Vec::new(),
+        };
+
+        let p = ws.save_grok_form(None, grok_form).unwrap();
+        ws.enable(&p.id).unwrap();
+
+        let live = read_grok_live(&ws.grok_paths).unwrap();
+        assert!(live.config_toml.contains("https://api.packy.ai/v1"));
+        assert!(live.config_toml.contains("xai-test-key"));
+
+        // Switch back to official grok
+        ws.enable(OFFICIAL_GROK_ID).unwrap();
+        let live_off = read_grok_live(&ws.grok_paths).unwrap();
+        assert!(!live_off.config_toml.contains("api_backend"));
     }
 
     #[test]

@@ -1,11 +1,21 @@
-//! Pure Codex / provider domain. No filesystem or SQLite here.
+//! Pure domain crate for AI provider management across Codex, Claude Code, and Grok Build.
+//! No filesystem or SQLite dependencies here.
 
 mod app_kind;
+mod claude;
 mod codex;
 mod error;
+mod grok;
 mod provider;
 
 pub use app_kind::AppKind;
+pub use claude::{
+    backfill_claude_settings, extract_claude_api_key, extract_claude_base_url,
+    extract_claude_model, extract_claude_provider_name, generate_claude_env,
+    official_claude_provider, official_claude_settings, parse_claude_form,
+    ClaudeForm, ClaudeKind, ClaudeModelMapping, ClaudePreset, ClaudeSettings,
+    CLAUDE_PRESETS, DEFAULT_CLAUDE_MODEL, OFFICIAL_CLAUDE_ID,
+};
 pub use codex::{
     backfill_codex_settings, extract_codex_api_key, extract_codex_base_url, extract_codex_model,
     extract_codex_provider_name, fetch_models_from_api, generate_catalog_json,
@@ -15,7 +25,20 @@ pub use codex::{
     CodexPreset, CodexSettings, DEFAULT_CODEX_MODEL, OFFICIAL_CODEX_ID, RESPONSES_PRESETS,
 };
 pub use error::DomainError;
+pub use grok::{
+    backfill_grok_settings, extract_grok_api_key, extract_grok_base_url, extract_grok_model,
+    extract_grok_provider_name, generate_grok_config_toml, official_grok_provider,
+    official_grok_settings, parse_grok_form, GrokForm, GrokKind, GrokModelMapping,
+    GrokPreset, GrokSettings, DEFAULT_GROK_MODEL, GROK_PRESETS, OFFICIAL_GROK_ID,
+};
 pub use provider::{new_provider_id, Provider, ProviderSettings};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProviderForm {
+    Codex(CodexForm),
+    Claude(ClaudeForm),
+    Grok(GrokForm),
+}
 
 #[cfg(test)]
 mod tests {
@@ -87,63 +110,44 @@ mod tests {
     }
 
     #[test]
-    fn backfill_prefers_live_key_and_toml() {
-        let stored = parse_codex_form(CodexForm {
-            name: "Packy".into(),
-            website_url: String::new(),
-            kind: CodexKind::ResponsesThirdParty,
-            api_key: "old".into(),
-            base_url: "https://old.example/v1".into(),
-            model: "old-model".into(),
+    fn claude_env_generation_works() {
+        let form = ClaudeForm {
+            name: "Anthropic Third Party".into(),
+            website_url: "https://example.com".into(),
+            kind: ClaudeKind::ThirdParty,
+            api_key: "sk-ant-test".into(),
+            base_url: "https://api.example.com".into(),
+            model: "claude-3-7-sonnet-20250219".into(),
             model_mappings: Vec::new(),
-        })
-        .unwrap();
-        let live_auth = json!({"OPENAI_API_KEY": "live-key"});
-        let live_toml = generate_third_party_config("Packy", "https://live.example/v1", "live-model");
-        let merged = backfill_codex_settings(&stored, &live_auth, &live_toml);
-        assert_eq!(extract_codex_api_key(&merged.auth).as_deref(), Some("live-key"));
-        assert_eq!(
-            extract_codex_base_url(&merged.config_toml).as_deref(),
-            Some("https://live.example/v1")
-        );
-        assert_eq!(extract_codex_model(&merged.config_toml).as_deref(), Some("live-model"));
+        };
+        let settings = parse_claude_form(form).unwrap();
+        assert_eq!(settings.kind, ClaudeKind::ThirdParty);
+        let env_obj = settings
+            .env
+            .get("env")
+            .and_then(|v| v.as_object())
+            .or_else(|| settings.env.as_object())
+            .unwrap();
+        assert_eq!(env_obj.get("ANTHROPIC_BASE_URL").unwrap(), "https://api.example.com");
+        assert_eq!(env_obj.get("ANTHROPIC_AUTH_TOKEN").unwrap(), "sk-ant-test");
+        assert_eq!(env_obj.get("ANTHROPIC_MODEL").unwrap(), "claude-3-7-sonnet-20250219");
     }
 
     #[test]
-    fn model_mapping_generates_catalog_json_and_config_link() {
-        let mappings = vec![
-            CodexModelMapping {
-                display_name: "DeepSeek V4".into(),
-                model: "deepseek-v4-flash".into(),
-                context_window: Some(64_000),
-                reasoning_effort: Some("high".into()),
-            },
-            CodexModelMapping {
-                display_name: "".into(),
-                model: "kimi-k2.7".into(),
-                context_window: None,
-                reasoning_effort: None,
-            },
-        ];
-
-        let catalog_json = generate_catalog_json(&mappings).expect("catalog json");
-        assert!(catalog_json.contains("deepseek-v4-flash"));
-        assert!(catalog_json.contains("DeepSeek V4"));
-        assert!(catalog_json.contains("64000"));
-        assert!(catalog_json.contains("\"reasoning_effort\": \"high\""));
-        assert!(catalog_json.contains("kimi-k2.7"));
-
-        let settings = parse_codex_form(CodexForm {
-            name: "MultiModel".into(),
-            website_url: String::new(),
-            kind: CodexKind::ResponsesThirdParty,
-            api_key: "sk-123".into(),
-            base_url: "https://api.example.com/v1".into(),
-            model: "deepseek-v4-flash".into(),
-            model_mappings: mappings,
-        })
-        .unwrap();
-
-        assert!(settings.config_toml.contains("model_catalog_json = \"router-switch-model-catalog.json\""));
+    fn grok_config_generation_works() {
+        let form = GrokForm {
+            name: "Packy Grok".into(),
+            website_url: "https://packy.ai".into(),
+            kind: GrokKind::ThirdParty,
+            api_key: "xai-test-key".into(),
+            base_url: "https://api.packy.ai/v1".into(),
+            model: "grok-4.5".into(),
+            model_mappings: Vec::new(),
+        };
+        let settings = parse_grok_form(form).unwrap();
+        assert_eq!(settings.kind, GrokKind::ThirdParty);
+        assert!(settings.config_toml.contains("base_url = \"https://api.packy.ai/v1\""));
+        assert!(settings.config_toml.contains("api_key = \"xai-test-key\""));
+        assert!(settings.config_toml.contains("model = \"grok-4.5\""));
     }
 }

@@ -1,6 +1,12 @@
 use domain::{
-    extract_codex_api_key, extract_codex_base_url, extract_codex_model, has_login_material,
-    CodexForm, CodexKind, CodexModelMapping, CodexPreset, Provider, RESPONSES_PRESETS,
+    extract_claude_base_url, extract_claude_model,
+    extract_codex_base_url, extract_codex_model,
+    extract_grok_base_url, extract_grok_model,
+    AppKind, ClaudeForm, ClaudeKind, ClaudeModelMapping,
+    CodexForm, CodexKind, CodexModelMapping, GrokForm, GrokKind, GrokModelMapping,
+    Provider, ProviderForm, ProviderSettings,
+    CLAUDE_PRESETS, DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_GROK_MODEL,
+    GROK_PRESETS, RESPONSES_PRESETS,
 };
 use gpui::{
     div, prelude::FluentBuilder, px, rgb, App, AppContext, Context, Entity, FontWeight, Hsla,
@@ -48,24 +54,30 @@ impl Render for DragGhostView {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresetSelectItem {
-    pub preset: CodexPreset,
+    pub id: String,
+    pub name: String,
+    pub website_url: String,
+    pub base_url: String,
+    pub model: String,
+    pub is_official: bool,
+    pub provider_label: String,
 }
 
 impl SelectItem for PresetSelectItem {
-    type Value = &'static str;
+    type Value = String;
 
     fn title(&self) -> SharedString {
-        self.preset.name.into()
+        self.name.clone().into()
     }
 
     fn value(&self) -> &Self::Value {
-        &self.preset.id
+        &self.id
     }
 
     fn render(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_official = self.preset.kind.is_official();
+        let is_official = self.is_official;
         h_flex()
             .items_center()
             .w_full()
@@ -80,15 +92,56 @@ impl SelectItem for PresetSelectItem {
                     .text_size(px(13.))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().foreground)
-                    .child(self.preset.name),
+                    .child(self.name.clone()),
             )
     }
 
     fn matches(&self, query: &str) -> bool {
         let q = query.to_lowercase();
-        self.preset.name.to_lowercase().contains(&q)
-            || self.preset.base_url.to_lowercase().contains(&q)
-            || self.preset.id.to_lowercase().contains(&q)
+        self.name.to_lowercase().contains(&q)
+            || self.base_url.to_lowercase().contains(&q)
+            || self.id.to_lowercase().contains(&q)
+    }
+}
+
+pub fn presets_for_app(app: AppKind) -> Vec<PresetSelectItem> {
+    match app {
+        AppKind::Codex => RESPONSES_PRESETS
+            .iter()
+            .map(|p| PresetSelectItem {
+                id: p.id.to_string(),
+                name: p.name.to_string(),
+                website_url: p.website_url.to_string(),
+                base_url: p.base_url.to_string(),
+                model: p.model.to_string(),
+                is_official: p.kind.is_official(),
+                provider_label: p.provider_label.to_string(),
+            })
+            .collect(),
+        AppKind::Claude => CLAUDE_PRESETS
+            .iter()
+            .map(|p| PresetSelectItem {
+                id: p.id.to_string(),
+                name: p.name.to_string(),
+                website_url: p.website_url.to_string(),
+                base_url: p.base_url.to_string(),
+                model: p.model.to_string(),
+                is_official: p.kind.is_official(),
+                provider_label: p.provider_label.to_string(),
+            })
+            .collect(),
+        AppKind::Grok => GROK_PRESETS
+            .iter()
+            .map(|p| PresetSelectItem {
+                id: p.id.to_string(),
+                name: p.name.to_string(),
+                website_url: p.website_url.to_string(),
+                base_url: p.base_url.to_string(),
+                model: p.model.to_string(),
+                is_official: p.kind.is_official(),
+                provider_label: p.provider_label.to_string(),
+            })
+            .collect(),
     }
 }
 
@@ -303,7 +356,7 @@ impl CatalogRowDraft {
         self._model_select_sub = Some(sub);
     }
 
-    pub fn to_mapping(&self, cx: &App) -> Option<CodexModelMapping> {
+    pub fn to_codex_mapping(&self, cx: &App) -> Option<CodexModelMapping> {
         let model_val = self.model.read(cx).value().to_string();
         let model_trimmed = model_val.trim();
         if model_trimmed.is_empty() {
@@ -320,6 +373,62 @@ impl CatalogRowDraft {
             .flatten();
 
         Some(CodexModelMapping {
+            display_name: if display_name_val.trim().is_empty() {
+                model_trimmed.to_string()
+            } else {
+                display_name_val.trim().to_string()
+            },
+            model: model_trimmed.to_string(),
+            context_window,
+            reasoning_effort,
+        })
+    }
+
+    pub fn to_claude_mapping(&self, cx: &App) -> Option<ClaudeModelMapping> {
+        let model_val = self.model.read(cx).value().to_string();
+        let model_trimmed = model_val.trim();
+        if model_trimmed.is_empty() {
+            return None;
+        }
+        let display_name_val = self.display_name.read(cx).value().to_string();
+        let context_str = self.context_window.read(cx).value().to_string();
+        let context_window = context_str.trim().parse::<u64>().ok();
+        let reasoning_effort = self
+            .reasoning_effort
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .flatten();
+
+        Some(ClaudeModelMapping {
+            display_name: if display_name_val.trim().is_empty() {
+                model_trimmed.to_string()
+            } else {
+                display_name_val.trim().to_string()
+            },
+            model: model_trimmed.to_string(),
+            context_window,
+            reasoning_effort,
+        })
+    }
+
+    pub fn to_grok_mapping(&self, cx: &App) -> Option<GrokModelMapping> {
+        let model_val = self.model.read(cx).value().to_string();
+        let model_trimmed = model_val.trim();
+        if model_trimmed.is_empty() {
+            return None;
+        }
+        let display_name_val = self.display_name.read(cx).value().to_string();
+        let context_str = self.context_window.read(cx).value().to_string();
+        let context_window = context_str.trim().parse::<u64>().ok();
+        let reasoning_effort = self
+            .reasoning_effort
+            .read(cx)
+            .selected_value()
+            .cloned()
+            .flatten();
+
+        Some(GrokModelMapping {
             display_name: if display_name_val.trim().is_empty() {
                 model_trimmed.to_string()
             } else {
@@ -392,7 +501,6 @@ impl SelectItem for UsageWindowSelectItem {
 pub struct RouterApp {
     workspace: Workspace,
     providers: Vec<Provider>,
-    current_id: Option<String>,
     route: Route,
     previous_route: Route,
     sidebar_open: bool,
@@ -415,8 +523,9 @@ pub struct RouterApp {
 }
 
 struct FormDraft {
+    app: AppKind,
     editing_id: Option<String>,
-    kind: CodexKind,
+    is_official: bool,
     name: Entity<InputState>,
     api_key: Entity<InputState>,
     base_url: Entity<InputState>,
@@ -503,7 +612,6 @@ impl RouterApp {
         let mut app = Self {
             workspace,
             providers: Vec::new(),
-            current_id: None,
             route: Route::Dashboard,
             previous_route: Route::Dashboard,
             sidebar_open: true,
@@ -529,14 +637,26 @@ impl RouterApp {
     }
 
     fn reload(&mut self) {
-        match self.workspace.snapshot() {
-            Ok(snapshot) => {
-                self.providers = snapshot.providers;
-                self.current_id = snapshot.current_id;
-                self.last_error = None;
+        let mut all = Vec::new();
+        for app in [AppKind::Codex, AppKind::Claude, AppKind::Grok] {
+            if let Ok(snapshot) = self.workspace.snapshot_for(app) {
+                all.extend(snapshot.providers);
             }
-            Err(error) => self.last_error = Some(error.to_string().into()),
         }
+        self.providers = all;
+        self.last_error = None;
+    }
+
+    fn current_id_for(&self, app: AppKind) -> Option<String> {
+        self.workspace.snapshot_for(app).ok()?.current_id
+    }
+
+    fn providers_for(&self, app: AppKind) -> Vec<Provider> {
+        self.providers
+            .iter()
+            .filter(|p| p.app == app)
+            .cloned()
+            .collect()
     }
 
     fn set_route(&mut self, route: Route, cx: &mut Context<Self>) {
@@ -639,33 +759,29 @@ impl RouterApp {
     }
 
     fn enable(&mut self, provider_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(provider) = self.providers.iter().find(|p| p.id == provider_id).cloned() else {
+            return;
+        };
         match self.workspace.enable(provider_id) {
             Ok(()) => {
-                let provider_name = self
-                    .providers
-                    .iter()
-                    .find(|p| p.id == provider_id)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_else(|| provider_id.to_string());
-                let official = self
-                    .providers
-                    .iter()
-                    .find(|provider| provider.id == provider_id)
-                    .is_some_and(Provider::is_official_codex);
+                let provider_name = provider.name.clone();
+                let is_official = provider.is_official();
                 self.reload();
-                self.logs.push(format!("已切换并启用供应商: {}", provider_name));
-                if official {
-                    notify_success(
-                        "已切到官方。未登录时请在终端执行 codex login，然后重启 Codex。",
-                        window,
-                        cx,
-                    );
+                self.logs.push(format!("已切换并启用 {} 供应商: {}", provider.app.display_name(), provider_name));
+                if is_official {
+                    let hint = match provider.app {
+                        AppKind::Codex => "已切到 Codex 官方。未登录时请在终端执行 codex login，然后重启 Codex。",
+                        AppKind::Claude => "已切到 Claude Code 官方配置。可直接在终端使用官方 Claude Code 登录。",
+                        AppKind::Grok => "已切到 Grok Build 官方配置。可直接使用官方 Grok CLI 认证。",
+                    };
+                    notify_success(hint, window, cx);
                 } else {
-                    notify_success(
-                        format!("已启用 {} 并写入 ~/.codex，请重启 Codex / 终端生效。", provider_name),
-                        window,
-                        cx,
-                    );
+                    let hint = match provider.app {
+                        AppKind::Codex => format!("已启用 {} 并写入 ~/.codex，请重启 Codex / 终端生效。", provider_name),
+                        AppKind::Claude => format!("已启用 {} 并写入 ~/.claude/settings.json，请重启 Claude Code 生效。", provider_name),
+                        AppKind::Grok => format!("已启用 {} 并写入 ~/.grok/config.toml，请重启 Grok Build 生效。", provider_name),
+                    };
+                    notify_success(hint, window, cx);
                 }
             }
             Err(error) => self.fail(error, window, cx),
@@ -713,15 +829,19 @@ impl RouterApp {
         });
     }
 
-    fn open_create_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.form = Some(FormDraft::create(window, cx));
+    fn open_create_form(&mut self, app: AppKind, window: &mut Window, cx: &mut Context<Self>) {
+        self.form = Some(FormDraft::create(app, window, cx));
         cx.notify();
     }
 
     fn open_edit_form(&mut self, provider_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(provider) = self.providers.iter().find(|p| p.id == provider_id).cloned() else {
+            return;
+        };
         match self.workspace.form_for(provider_id) {
             Ok(form) => {
-                self.form = Some(FormDraft::from_codex_form(
+                self.form = Some(FormDraft::from_provider_form(
+                    provider.app,
                     Some(provider_id.to_string()),
                     form,
                     window,
@@ -737,13 +857,14 @@ impl RouterApp {
         let Some(form) = self.form.as_ref() else {
             return true;
         };
+        let app = form.app;
         let editing_id = form.editing_id.clone();
-        let payload = form.to_codex_form(cx);
-        match self.workspace.save_form(editing_id.as_deref(), payload) {
+        let payload = form.to_provider_form(cx);
+        match self.workspace.save_form(app, editing_id.as_deref(), payload) {
             Ok(_) => {
                 self.form = None;
                 self.reload();
-                self.logs.push("保存了供应商配置".into());
+                self.logs.push(format!("保存了 {} 供应商配置", app.display_name()));
                 notify_success("供应商配置已保存", window, cx);
                 cx.notify();
                 true
@@ -757,14 +878,14 @@ impl RouterApp {
 
     fn apply_preset(
         &mut self,
-        preset: CodexPreset,
+        preset: PresetSelectItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
-        form.kind = preset.kind;
+        form.is_official = preset.is_official;
         form.name
             .update(cx, |input, cx| input.set_value(preset.name, window, cx));
         form.base_url
@@ -829,7 +950,9 @@ impl RouterApp {
                                         let current_model = form.model.read(cx).value().to_string();
                                         if let Some(first) = models.first() {
                                             if current_model.trim().is_empty()
-                                                || current_model == domain::DEFAULT_CODEX_MODEL
+                                                || current_model == DEFAULT_CODEX_MODEL
+                                                || current_model == DEFAULT_CLAUDE_MODEL
+                                                || current_model == DEFAULT_GROK_MODEL
                                             {
                                                 let first = first.clone();
                                                 form.model.update(cx, |input: &mut InputState, cx| {
@@ -934,39 +1057,36 @@ impl RouterApp {
         cx.notify();
     }
 
-    fn filtered_providers(&self, cx: &App) -> Vec<Provider> {
+    fn filtered_providers(&self, app: AppKind, cx: &App) -> Vec<Provider> {
         let query = self.search_input.read(cx).value().to_string();
         let query = query.trim().to_lowercase();
+        let app_providers = self.providers_for(app);
         if query.is_empty() {
-            return self.providers.clone();
+            return app_providers;
         }
 
-        self.providers
-            .iter()
+        app_providers
+            .into_iter()
             .filter(|provider| {
                 if provider.name.to_lowercase().contains(&query) {
                     return true;
                 }
-                if let Some(site) = provider.website_url.as_ref() {
-                    if site.to_lowercase().contains(&query) {
-                        return true;
+                match &provider.settings {
+                    ProviderSettings::Codex(s) => {
+                        extract_codex_model(&s.config_toml).is_some_and(|m| m.to_lowercase().contains(&query))
+                        || extract_codex_base_url(&s.config_toml).is_some_and(|u| u.to_lowercase().contains(&query))
                     }
+                    ProviderSettings::Claude(s) => {
+                        extract_claude_model(&s.env).is_some_and(|m| m.to_lowercase().contains(&query))
+                        || extract_claude_base_url(&s.env).is_some_and(|u| u.to_lowercase().contains(&query))
+                    }
+                    ProviderSettings::Grok(s) => {
+                        extract_grok_model(&s.config_toml).is_some_and(|m| m.to_lowercase().contains(&query))
+                        || extract_grok_base_url(&s.config_toml).is_some_and(|u| u.to_lowercase().contains(&query))
+                    }
+                    ProviderSettings::Unsupported { .. } => false,
                 }
-                if let Some(settings) = provider.codex_settings() {
-                    if let Some(model) = extract_codex_model(&settings.config_toml) {
-                        if model.to_lowercase().contains(&query) {
-                            return true;
-                        }
-                    }
-                    if let Some(base_url) = extract_codex_base_url(&settings.config_toml) {
-                        if base_url.to_lowercase().contains(&query) {
-                            return true;
-                        }
-                    }
-                }
-                false
             })
-            .cloned()
             .collect()
     }
 
@@ -986,7 +1106,7 @@ impl RouterApp {
         let fg = cx.theme().sidebar_foreground;
 
         div()
-            .id(SharedString::new_static(id))
+            .id(SharedString::from(id))
             .h(px(38.))
             .w_full()
             .px(px(10.))
@@ -996,6 +1116,7 @@ impl RouterApp {
             .gap(px(10.))
             .text_size(px(14.))
             .text_color(if disabled { fg.opacity(0.4) } else { fg })
+            .cursor_pointer()
             .when(active, |this| this.bg(accent).font_weight(FontWeight::SEMIBOLD))
             .when(!disabled, |this| this.hover(|this| this.bg(accent)))
             .child(
@@ -1088,9 +1209,12 @@ impl RouterApp {
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let count = self.providers.len();
         let border = cx.theme().sidebar_border;
         let is_en = self.language == AppLanguage::En;
+
+        let codex_count = self.providers_for(AppKind::Codex).len();
+        let claude_count = self.providers_for(AppKind::Claude).len();
+        let grok_count = self.providers_for(AppKind::Grok).len();
 
         let mut app_nav_items = Vec::new();
         for app_id in &self.main_apps {
@@ -1111,8 +1235,8 @@ impl RouterApp {
                     Some(rgb(0xD97757).into()),
                     "Claude Code",
                     Route::Claude,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
+                    Some(format!("{claude_count}")),
+                    false,
                     cx,
                 )),
                 "claude-desktop" => Some(self.draggable_nav_item(
@@ -1131,7 +1255,7 @@ impl RouterApp {
                     Some(rgb(0x10A37F).into()),
                     "Codex",
                     Route::Codex,
-                    Some(format!("{count}")),
+                    Some(format!("{codex_count}")),
                     false,
                     cx,
                 )),
@@ -1181,8 +1305,8 @@ impl RouterApp {
                     Some(rgb(0x8B5CF6).into()),
                     "Grok Build",
                     Route::Grok,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
+                    Some(format!("{grok_count}")),
+                    false,
                     cx,
                 )),
                 "kimi" => Some(self.draggable_nav_item(
@@ -1330,23 +1454,32 @@ impl RouterApp {
     }
 
     fn render_dashboard_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let home = self.workspace.codex_home();
-        let has_auth = home.join("auth.json").exists();
-        let has_config = home.join("config.toml").exists();
-        let current_provider = self
-            .current_id
+        let codex_curr = self.current_id_for(AppKind::Codex);
+        let claude_curr = self.current_id_for(AppKind::Claude);
+        let grok_curr = self.current_id_for(AppKind::Grok);
+
+        let codex_provider = codex_curr
             .as_ref()
             .and_then(|id| self.providers.iter().find(|p| &p.id == id));
-        let current_name: SharedString = current_provider
-            .map(|p| p.name.clone().into())
-            .unwrap_or_else(|| "未启用".into());
-        let current_model: SharedString = current_provider
-            .and_then(|p| p.codex_settings())
-            .and_then(|s| extract_codex_model(&s.config_toml))
-            .map(SharedString::from)
-            .unwrap_or_else(|| "默认官方模型".into());
+        let claude_provider = claude_curr
+            .as_ref()
+            .and_then(|id| self.providers.iter().find(|p| &p.id == id));
+        let grok_provider = grok_curr
+            .as_ref()
+            .and_then(|id| self.providers.iter().find(|p| &p.id == id));
+
+        let codex_name = codex_provider
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "默认官方".into());
+        let claude_name = claude_provider
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "默认官方".into());
+        let grok_name = grok_provider
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "默认官方".into());
+
         let total_count = self.providers.len();
-        let official_count = self.providers.iter().filter(|p| p.is_official_codex()).count();
+        let official_count = self.providers.iter().filter(|p| p.is_official()).count();
         let third_party_count = total_count.saturating_sub(official_count);
 
         v_flex()
@@ -1370,27 +1503,23 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(8.))
-                                    .child(theme::tile_label("ENGINE", cx))
+                                    .child(theme::tile_label("ENGINE / CODEX", cx))
                                     .child(
                                         h_flex()
                                             .items_center()
                                             .justify_between()
                                             .child(
                                                 div()
-                                                    .text_size(px(24.))
+                                                    .text_size(px(20.))
                                                     .font_weight(FontWeight::BOLD)
                                                     .text_color(cx.theme().foreground)
-                                                    .child(if current_provider.is_some() { "Active" } else { "Offline" }),
+                                                    .child(codex_name),
                                             )
                                             .child(
                                                 div()
                                                     .size(px(10.))
                                                     .rounded_full()
-                                                    .bg(if current_provider.is_some() {
-                                                        rgb(StatusColors::GREEN_500)
-                                                    } else {
-                                                        rgb(StatusColors::RED_500)
-                                                    }),
+                                                    .bg(rgb(StatusColors::GREEN_500)),
                                             ),
                                     )
                                     .child(
@@ -1398,7 +1527,7 @@ impl RouterApp {
                                             .text_size(px(12.))
                                             .text_color(cx.theme().muted_foreground)
                                             .line_clamp(1)
-                                            .child(format!("Codex ({})", home.display())),
+                                            .child("Codex CLI 引擎就绪"),
                                     ),
                             ),
                     )
@@ -1408,21 +1537,21 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(8.))
-                                    .child(theme::tile_label("ACTIVE PROVIDER", cx))
+                                    .child(theme::tile_label("CLAUDE CODE", cx))
                                     .child(
                                         div()
-                                            .text_size(px(24.))
+                                            .text_size(px(20.))
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(cx.theme().foreground)
                                             .line_clamp(1)
-                                            .child(current_name),
+                                            .child(claude_name),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(cx.theme().muted_foreground)
                                             .line_clamp(1)
-                                            .child(current_model),
+                                            .child("Claude Code 引擎就绪"),
                                     ),
                             ),
                     )
@@ -1432,54 +1561,21 @@ impl RouterApp {
                             .child(
                                 v_flex()
                                     .gap(px(8.))
-                                    .child(theme::tile_label("AUTH & CONFIG", cx))
+                                    .child(theme::tile_label("GROK BUILD", cx))
                                     .child(
-                                        h_flex()
-                                            .gap(px(6.))
-                                            .child(
-                                                div()
-                                                    .px(px(8.))
-                                                    .py(px(4.))
-                                                    .rounded(px(6.))
-                                                    .bg(if has_auth {
-                                                        rgb(StatusColors::GREEN_100)
-                                                    } else {
-                                                        rgb(StatusColors::RED_100)
-                                                    })
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(if has_auth {
-                                                        rgb(StatusColors::GREEN_700)
-                                                    } else {
-                                                        rgb(StatusColors::RED_700)
-                                                    })
-                                                    .child(if has_auth { "auth.json 有" } else { "auth.json 无" }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .px(px(8.))
-                                                    .py(px(4.))
-                                                    .rounded(px(6.))
-                                                    .bg(if has_config {
-                                                        rgb(StatusColors::BLUE_100)
-                                                    } else {
-                                                        rgb(StatusColors::RED_100)
-                                                    })
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(if has_config {
-                                                        rgb(StatusColors::BLUE_800)
-                                                    } else {
-                                                        rgb(StatusColors::RED_700)
-                                                    })
-                                                    .child(if has_config { "config.toml 有" } else { "config.toml 无" }),
-                                            ),
+                                        div()
+                                            .text_size(px(20.))
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(cx.theme().foreground)
+                                            .line_clamp(1)
+                                            .child(grok_name),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(12.))
                                             .text_color(cx.theme().muted_foreground)
-                                            .child("本地配置就绪状态"),
+                                            .line_clamp(1)
+                                            .child("Grok Build 引擎就绪"),
                                     ),
                             ),
                     )
@@ -1492,7 +1588,7 @@ impl RouterApp {
                                     .child(theme::tile_label("TOTAL PROVIDERS", cx))
                                     .child(
                                         div()
-                                            .text_size(px(24.))
+                                            .text_size(px(20.))
                                             .font_weight(FontWeight::BOLD)
                                             .text_color(cx.theme().foreground)
                                             .child(format!("{total_count}")),
@@ -1522,7 +1618,7 @@ impl RouterApp {
                                     Button::new("manage-all")
                                         .ghost()
                                         .small()
-                                        .label("进入完整管理 →")
+                                        .label("进入 Codex 管理 →")
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.set_route(Route::Codex, cx);
                                         })),
@@ -1532,16 +1628,22 @@ impl RouterApp {
                             v_flex()
                                 .w_full()
                                 .gap(px(8.))
-                                .children(self.providers.iter().map(|provider| {
-                                    let is_current = self.current_id.as_deref() == Some(&provider.id);
+                                .children(self.providers.iter().take(6).map(|provider| {
+                                    let current_id = self.current_id_for(provider.app);
+                                    let is_current = current_id.as_deref() == Some(&provider.id);
                                     let id = provider.id.clone();
-                                    let settings = provider.codex_settings();
-                                    let model = settings
-                                        .and_then(|s| extract_codex_model(&s.config_toml))
-                                        .unwrap_or_else(|| "默认模型".into());
-                                    let endpoint = settings
-                                        .and_then(|s| extract_codex_base_url(&s.config_toml))
-                                        .unwrap_or_else(|| "官方端点".into());
+                                    let model = match &provider.settings {
+                                        ProviderSettings::Codex(s) => extract_codex_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
+                                        ProviderSettings::Claude(s) => extract_claude_model(&s.env).unwrap_or_else(|| "默认模型".into()),
+                                        ProviderSettings::Grok(s) => extract_grok_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
+                                        ProviderSettings::Unsupported { .. } => "-".into(),
+                                    };
+                                    let endpoint = match &provider.settings {
+                                        ProviderSettings::Codex(s) => extract_codex_base_url(&s.config_toml).unwrap_or_else(|| "官方端点".into()),
+                                        ProviderSettings::Claude(s) => extract_claude_base_url(&s.env).unwrap_or_else(|| "官方端点".into()),
+                                        ProviderSettings::Grok(s) => extract_grok_base_url(&s.config_toml).unwrap_or_else(|| "官方端点".into()),
+                                        ProviderSettings::Unsupported { .. } => "-".into(),
+                                    };
 
                                     h_flex()
                                         .w_full()
@@ -1581,7 +1683,7 @@ impl RouterApp {
                                                         } else {
                                                             cx.theme().foreground
                                                         })
-                                                        .child(if provider.is_official_codex() {
+                                                        .child(if provider.is_official() {
                                                             IconName::Bot
                                                         } else {
                                                             IconName::SquareTerminal
@@ -1593,6 +1695,7 @@ impl RouterApp {
                                                         .text_size(px(14.))
                                                         .child(provider.name.clone()),
                                                 )
+                                                .child(Tag::secondary().small().child(provider.app.display_name()))
                                                 .when(is_current, |this| {
                                                     this.child(Tag::primary().small().child("使用中"))
                                                 })
@@ -1619,8 +1722,9 @@ impl RouterApp {
             )
     }
 
-    fn render_codex_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let filtered = self.filtered_providers(cx);
+    fn render_app_providers_page(&self, app: AppKind, cx: &mut Context<Self>) -> impl IntoElement {
+        let filtered = self.filtered_providers(app, cx);
+        let app_name = app.display_name();
 
         v_flex()
             .w_full()
@@ -1639,64 +1743,63 @@ impl RouterApp {
                             .child(Input::new(&self.search_input).cleanable(true)),
                     )
                     .child(
-                        Button::new("codex-add-top")
+                        Button::new(SharedString::from(format!("{}-add-top", app.as_str())))
                             .primary()
                             .icon(IconName::Plus)
                             .label("新建供应商")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_create_form(window, cx);
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_create_form(app, window, cx);
                             })),
                     ),
             )
             .child(
-                if self.providers.is_empty() {
-                    empty_state(cx).into_any_element()
-                } else if filtered.is_empty() {
-                    empty_search_state(cx).into_any_element()
+                if filtered.is_empty() {
+                    let has_query = !self.search_input.read(cx).value().trim().is_empty();
+                    if has_query {
+                        empty_search_state(cx).into_any_element()
+                    } else {
+                        empty_state(app_name, cx).into_any_element()
+                    }
                 } else {
                     v_flex()
                         .w_full()
                         .gap(px(10.))
-                        .children(filtered.iter().map(|provider| {
-                            self.provider_card(provider, cx)
+                        .children(filtered.into_iter().map(|provider| {
+                            self.render_provider_card(&provider, cx)
                         }))
                         .into_any_element()
                 },
             )
     }
 
-    fn provider_card(&self, provider: &Provider, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_provider_card(&self, provider: &Provider, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_id = self.current_id_for(provider.app);
+        let is_current = current_id.as_deref() == Some(&provider.id);
+        let is_official = provider.is_official();
         let id = provider.id.clone();
-        let is_current = self.current_id.as_deref() == Some(&provider.id);
-        let settings = provider.codex_settings();
-        let kind = settings.map(|s| s.kind).unwrap_or(CodexKind::Official);
-        let endpoint = settings
-            .and_then(|s| extract_codex_base_url(&s.config_toml))
-            .unwrap_or_else(|| "官方默认端点 (https://api.openai.com/v1)".into());
-        let model = settings
-            .and_then(|s| extract_codex_model(&s.config_toml))
-            .unwrap_or_else(|| "默认模型".into());
-        let login_type = settings
-            .map(|s| {
-                if extract_codex_api_key(&s.auth).is_some() {
-                    "API Key"
-                } else if has_login_material(&s.auth) {
-                    "ChatGPT OAuth"
-                } else {
-                    "未存登录材料"
-                }
-            })
-            .unwrap_or("未存登录材料");
         let website_url = provider.website_url.clone();
 
+        let model = match &provider.settings {
+            ProviderSettings::Codex(s) => extract_codex_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
+            ProviderSettings::Claude(s) => extract_claude_model(&s.env).unwrap_or_else(|| "默认模型".into()),
+            ProviderSettings::Grok(s) => extract_grok_model(&s.config_toml).unwrap_or_else(|| "默认模型".into()),
+            ProviderSettings::Unsupported { .. } => "-".into(),
+        };
+
+        let endpoint = match &provider.settings {
+            ProviderSettings::Codex(s) => extract_codex_base_url(&s.config_toml).unwrap_or_else(|| "官方端点 (OpenAI)".into()),
+            ProviderSettings::Claude(s) => extract_claude_base_url(&s.env).unwrap_or_else(|| "官方端点 (Anthropic)".into()),
+            ProviderSettings::Grok(s) => extract_grok_base_url(&s.config_toml).unwrap_or_else(|| "官方端点 (xAI)".into()),
+            ProviderSettings::Unsupported { .. } => "-".into(),
+        };
+
+        let login_type = if is_official {
+            "官方认证 / OAuth"
+        } else {
+            "API Key"
+        };
+
         theme::tile(cx)
-            .map(|this| {
-                if is_current {
-                    this.border_color(cx.theme().primary).bg(cx.theme().primary.opacity(0.04))
-                } else {
-                    this
-                }
-            })
             .child(
                 h_flex()
                     .w_full()
@@ -1729,7 +1832,7 @@ impl RouterApp {
                                             } else {
                                                 cx.theme().foreground
                                             })
-                                            .child(if kind.is_official() {
+                                            .child(if is_official {
                                                 IconName::Bot
                                             } else {
                                                 IconName::SquareTerminal
@@ -1746,10 +1849,10 @@ impl RouterApp {
                                         this.child(Tag::primary().small().child("使用中"))
                                     })
                                     .child(
-                                        if kind.is_official() {
+                                        if is_official {
                                             Tag::secondary().small().child("官方")
                                         } else {
-                                            Tag::info().small().child("Responses 第三方")
+                                            Tag::info().small().child("第三方供应商")
                                         },
                                     ),
                             )
@@ -2211,9 +2314,8 @@ impl RouterApp {
                                         Button::new("theme-sys")
                                             .outline()
                                             .small()
-                                            .icon(IconName::Palette)
                                             .selected(self.theme == ThemePreference::System)
-                                            .label(if is_en { "Follow System" } else { "跟随系统" })
+                                            .label(if is_en { "System" } else { "跟随系统" })
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.set_theme_preference(ThemePreference::System, window, cx);
                                             })),
@@ -2228,7 +2330,7 @@ impl RouterApp {
                     theme::tile(cx).child(
                         v_flex()
                             .w_full()
-                            .gap(px(10.))
+                            .gap(px(12.))
                             .child(
                                 v_flex()
                                     .gap(px(2.))
@@ -2249,10 +2351,18 @@ impl RouterApp {
                                     .w_full()
                                     .flex_wrap()
                                     .gap(px(8.))
-                                    .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
+                                    .child(self.render_app_toggle_chip("amp", "Amp", CustomIcon::Amp, rgb(0xEA580C).into(), cx))
                                     .child(self.render_app_toggle_chip("claude", "Claude Code", CustomIcon::Claude, rgb(0xD97757).into(), cx))
                                     .child(self.render_app_toggle_chip("claude-desktop", "Claude Desktop", CustomIcon::Claude, rgb(0xD97757).into(), cx))
-                                    .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx)),
+                                    .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
+                                    .child(self.render_app_toggle_chip("cursor", "Cursor CLI", CustomIcon::Cursor, rgb(0x6366F1).into(), cx))
+                                    .child(self.render_app_toggle_chip("deepseek", "DeepSeek Harness", CustomIcon::DeepSeek, rgb(0x3B82F6).into(), cx))
+                                    .child(self.render_app_toggle_chip("fx", "Fx", CustomIcon::Fx, rgb(0x4B5563).into(), cx))
+                                    .child(self.render_app_toggle_chip("opencode", "OpenCode", CustomIcon::OpenCode, rgb(0x0284C7).into(), cx))
+                                    .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx))
+                                    .child(self.render_app_toggle_chip("kimi", "Kimi Code", CustomIcon::Kimi, rgb(0x2563EB).into(), cx))
+                                    .child(self.render_app_toggle_chip("ohmypi", "Oh My Pi", CustomIcon::OhMyPi, rgb(0xEC4899).into(), cx))
+                                    .child(self.render_app_toggle_chip("pi", "Pi", CustomIcon::Pi, rgb(0x3B82F6).into(), cx)),
                             ),
                     ),
                 )
@@ -2263,13 +2373,21 @@ impl RouterApp {
                     theme::tile(cx).child(
                         v_flex()
                             .w_full()
-                            .gap(px(14.))
+                            .gap(px(12.))
                             .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .child(Icon::new(IconName::LayoutDashboard).size(px(15.)))
-                                    .child(theme::tile_label(if is_en { "WINDOW BEHAVIOR / 窗口行为" } else { "窗口行为" }, cx)),
+                                v_flex()
+                                    .gap(px(2.))
+                                    .child(theme::tile_label(if is_en { "WINDOW BEHAVIOR / 窗口行为" } else { "窗口行为" }, cx))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(theme.muted_foreground)
+                                            .child(if is_en {
+                                                "Manage application launch and window closing preferences."
+                                            } else {
+                                                "管理应用启动方式与窗口关闭行为。"
+                                            }),
+                                    ),
                             )
                             .child(
                                 // 开机自启
@@ -2447,8 +2565,8 @@ impl RouterApp {
                             .py(px(6.))
                             .items_center()
                             .text_size(px(12.))
-                            .child(div().w(px(200.)).font_weight(FontWeight::MEDIUM).child("o3-mini"))
-                            .child(div().w(px(140.)).text_color(rgb(0x10A37F)).child("Codex (OpenAI)"))
+                            .child(div().w(px(200.)).font_weight(FontWeight::MEDIUM).child("grok-4.5"))
+                            .child(div().w(px(140.)).text_color(rgb(0x8B5CF6)).child("Grok Build"))
                             .child(div().w(px(90.)).child("224"))
                             .child(div().w(px(110.)).child("0.29 M"))
                             .child(div().w(px(110.)).child("0.12 M"))
@@ -2473,11 +2591,10 @@ impl RouterApp {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
                     .child(div().w(px(140.)).child("月份"))
-                    .child(div().w(px(110.)).child("请求次数"))
-                    .child(div().w(px(130.)).child("总 Token"))
-                    .child(div().w(px(130.)).child("缓存命中率"))
-                    .child(div().w(px(120.)).child("月度费用"))
-                    .child(div().flex_1().child("消耗占比")),
+                    .child(div().w(px(120.)).child("活跃应用"))
+                    .child(div().w(px(110.)).child("总请求数"))
+                    .child(div().w(px(140.)).child("总 Token 消耗"))
+                    .child(div().flex_1().child("账单总额")),
             )
             .child(
                 v_flex()
@@ -2491,11 +2608,10 @@ impl RouterApp {
                             .items_center()
                             .text_size(px(12.))
                             .child(div().w(px(140.)).font_weight(FontWeight::MEDIUM).child("2026 年 8 月"))
-                            .child(div().w(px(110.)).child("720 次"))
-                            .child(div().w(px(130.)).child("2.80 M"))
-                            .child(div().w(px(130.)).text_color(rgb(0x10B981)).child("36.2%"))
-                            .child(div().w(px(120.)).font_weight(FontWeight::SEMIBOLD).child("$10.82"))
-                            .child(div().flex_1().child("58.6%")),
+                            .child(div().w(px(120.)).child("Codex / Claude"))
+                            .child(div().w(px(110.)).child("1,284 次"))
+                            .child(div().w(px(140.)).child("4.82 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$18.46")),
                     )
                     .child(
                         h_flex()
@@ -2505,11 +2621,10 @@ impl RouterApp {
                             .items_center()
                             .text_size(px(12.))
                             .child(div().w(px(140.)).font_weight(FontWeight::MEDIUM).child("2026 年 7 月"))
-                            .child(div().w(px(110.)).child("564 次"))
-                            .child(div().w(px(130.)).child("2.02 M"))
-                            .child(div().w(px(130.)).text_color(rgb(0x10B981)).child("31.8%"))
-                            .child(div().w(px(120.)).font_weight(FontWeight::SEMIBOLD).child("$7.64"))
-                            .child(div().flex_1().child("41.4%")),
+                            .child(div().w(px(120.)).child("Codex"))
+                            .child(div().w(px(110.)).child("2,140 次"))
+                            .child(div().w(px(140.)).child("7.95 M"))
+                            .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("$29.80")),
                     ),
             )
     }
@@ -2529,9 +2644,9 @@ impl RouterApp {
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
-                    .child(div().w(px(260.)).child("项目根目录"))
+                    .child(div().w(px(260.)).child("工作区目录 / 项目"))
                     .child(div().w(px(120.)).child("主要服务商"))
-                    .child(div().w(px(90.)).child("请求次数"))
+                    .child(div().w(px(90.)).child("调用次数"))
                     .child(div().w(px(120.)).child("消耗 Token"))
                     .child(div().flex_1().child("预估费用")),
             )
@@ -3060,16 +3175,17 @@ impl RouterApp {
             return div().into_any_element();
         };
 
+        let app_name = form.app.display_name();
         let is_editing = form.editing_id.is_some();
         let title = if is_editing {
-            "编辑 Codex 供应商"
+            format!("编辑 {} 供应商", app_name)
         } else {
-            "新建 Codex 供应商"
+            format!("新建 {} 供应商", app_name)
         };
         let subtitle = if is_editing {
             "修改供应商的接口端点、模型名称与模型映射配置"
         } else {
-            "从预设模版快速创建或手动填写第三方 Responses API 供应商"
+            "从预设模版快速创建或手动填写第三方 API 供应商"
         };
         let theme = cx.theme();
 
@@ -3108,7 +3224,7 @@ impl RouterApp {
                                     .text_size(px(13.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(theme.muted_foreground)
-                                    .child("Codex 供应商"),
+                                    .child(format!("{} 供应商", app_name)),
                             )
                             .child(
                                 div()
@@ -3121,7 +3237,7 @@ impl RouterApp {
                                     .text_size(px(13.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.foreground)
-                                    .child(title),
+                                    .child(title.clone()),
                             ),
                     )
                     .child(
@@ -3176,7 +3292,7 @@ impl RouterApp {
                         .child(theme::tile_label("PRESET TEMPLATE / 快速选择预设模版", cx))
                         .child(
                             Select::new(&form.preset_select)
-                                .placeholder("选择预设模版 (如 DeepSeek, Kimi, 阿里百炼, 自定义模板...)")
+                                .placeholder("选择预设模版...")
                                 .search_placeholder("搜索预设模版...")
                                 .cleanable(true),
                         )
@@ -3197,7 +3313,7 @@ impl RouterApp {
                         .child(theme::tile_label("BASIC & API CREDENTIALS / 基础配置与接口凭证", cx))
                         .child(form_field("供应商名称", Input::new(&form.name)))
                         .child(form_field(
-                            "API Key (OPENAI_API_KEY)",
+                            "API Key / 凭据",
                             Input::new(&form.api_key).mask_toggle(),
                         ))
                         .child(form_field("API 端点 (Base URL)", Input::new(&form.base_url)))
@@ -3209,7 +3325,7 @@ impl RouterApp {
                                         .text_size(px(12.))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.foreground)
-                                        .child("模型名称 (Model)"),
+                                        .child("默认模型 (Model)"),
                                 )
                                 .child(
                                     h_flex()
@@ -3263,7 +3379,7 @@ impl RouterApp {
                                             div()
                                                 .text_size(px(12.))
                                                 .text_color(theme.muted_foreground)
-                                                .child("自定义在 Codex 客户端下拉菜单中展示的模型别名、映射到服务商的真实模型、上下文窗口大小及思考等级。"),
+                                                .child("自定义在客户端下拉菜单中展示的模型别名、映射到服务商的真实模型、上下文窗口大小及思考等级。"),
                                         ),
                                 )
                                 .child(
@@ -3447,7 +3563,7 @@ impl RouterApp {
                             div()
                                 .text_size(px(12.))
                                 .text_color(theme.muted_foreground)
-                                .child("💡 提示：配置模型映射后，将生成 ~/.codex/router-switch-model-catalog.json，在 Codex 侧边栏/设置中可直接切换已配置的模型。"),
+                                .child("💡 提示：配置模型映射后，在客户端下拉菜单或设置中可直接切换已配置的模型。"),
                         ),
                 ),
             )
@@ -3490,9 +3606,9 @@ impl Render for RouterApp {
         } else {
             match self.route {
                 Route::Dashboard => self.render_dashboard_page(cx).into_any_element(),
-                Route::Codex => self.render_codex_page(cx).into_any_element(),
-                Route::Claude => self.render_codex_page(cx).into_any_element(),
-                Route::Grok => self.render_codex_page(cx).into_any_element(),
+                Route::Codex => self.render_app_providers_page(AppKind::Codex, cx).into_any_element(),
+                Route::Claude => self.render_app_providers_page(AppKind::Claude, cx).into_any_element(),
+                Route::Grok => self.render_app_providers_page(AppKind::Grok, cx).into_any_element(),
                 Route::Notifications => self.render_notifications_page(cx).into_any_element(),
                 Route::Settings => self.render_settings_page(cx).into_any_element(),
             }
@@ -3559,49 +3675,100 @@ impl Render for RouterApp {
 }
 
 impl FormDraft {
-    fn create(window: &mut Window, cx: &mut Context<RouterApp>) -> Self {
-        Self::from_codex_form(
-            None,
-            CodexForm {
+    fn create(app: AppKind, window: &mut Window, cx: &mut Context<RouterApp>) -> Self {
+        let default_form = match app {
+            AppKind::Codex => ProviderForm::Codex(CodexForm {
                 name: String::new(),
                 website_url: String::new(),
                 kind: CodexKind::ResponsesThirdParty,
                 api_key: String::new(),
                 base_url: String::new(),
-                model: String::new(),
+                model: DEFAULT_CODEX_MODEL.to_string(),
                 model_mappings: Vec::new(),
-            },
-            window,
-            cx,
-        )
+            }),
+            AppKind::Claude => ProviderForm::Claude(ClaudeForm {
+                name: String::new(),
+                website_url: String::new(),
+                kind: ClaudeKind::ThirdParty,
+                api_key: String::new(),
+                base_url: String::new(),
+                model: DEFAULT_CLAUDE_MODEL.to_string(),
+                model_mappings: Vec::new(),
+            }),
+            AppKind::Grok => ProviderForm::Grok(GrokForm {
+                name: String::new(),
+                website_url: String::new(),
+                kind: GrokKind::ThirdParty,
+                api_key: String::new(),
+                base_url: String::new(),
+                model: DEFAULT_GROK_MODEL.to_string(),
+                model_mappings: Vec::new(),
+            }),
+        };
+
+        Self::from_provider_form(app, None, default_form, window, cx)
     }
 
-    fn from_codex_form(
+    fn from_provider_form(
+        app: AppKind,
         editing_id: Option<String>,
-        form: CodexForm,
+        form: ProviderForm,
         window: &mut Window,
         cx: &mut Context<RouterApp>,
     ) -> Self {
-        let presets: Vec<PresetSelectItem> = RESPONSES_PRESETS
-            .iter()
-            .copied()
-            .map(|p| PresetSelectItem { preset: p })
-            .collect();
+        let presets = presets_for_app(app);
+
+        let (name, api_key, base_url, model, is_official, catalog_rows_data) = match &form {
+            ProviderForm::Codex(f) => (
+                f.name.clone(),
+                f.api_key.clone(),
+                f.base_url.clone(),
+                f.model.clone(),
+                f.kind.is_official(),
+                f.model_mappings
+                    .iter()
+                    .map(|m| (m.display_name.clone(), m.model.clone(), m.context_window, m.reasoning_effort.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            ProviderForm::Claude(f) => (
+                f.name.clone(),
+                f.api_key.clone(),
+                f.base_url.clone(),
+                f.model.clone(),
+                f.kind.is_official(),
+                f.model_mappings
+                    .iter()
+                    .map(|m| (m.display_name.clone(), m.model.clone(), m.context_window, m.reasoning_effort.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+            ProviderForm::Grok(f) => (
+                f.name.clone(),
+                f.api_key.clone(),
+                f.base_url.clone(),
+                f.model.clone(),
+                f.kind.is_official(),
+                f.model_mappings
+                    .iter()
+                    .map(|m| (m.display_name.clone(), m.model.clone(), m.context_window, m.reasoning_effort.clone()))
+                    .collect::<Vec<_>>(),
+            ),
+        };
 
         let selected_index = if editing_id.is_none() {
-            RESPONSES_PRESETS
+            presets
                 .iter()
                 .position(|p| p.id == "custom")
                 .map(|idx| gpui_component::IndexPath::default().row(idx))
-        } else if form.name.trim().is_empty() {
+        } else if name.trim().is_empty() {
             None
         } else {
-            RESPONSES_PRESETS
+            presets
                 .iter()
-                .position(|p| p.name == form.name)
+                .position(|p| p.name == name)
                 .map(|idx| gpui_component::IndexPath::default().row(idx))
         };
 
+        let presets_for_sub = presets.clone();
         let preset_select = cx.new(|cx| {
             SelectState::new(presets, selected_index, window, cx).searchable(true)
         });
@@ -3612,24 +3779,24 @@ impl FormDraft {
             cx,
             move |_, event: &SelectEvent<Vec<PresetSelectItem>>, window, cx| {
                 if let SelectEvent::Confirm(Some(preset_id)) = event {
-                    if let Some(preset) = RESPONSES_PRESETS.iter().find(|p| p.id == *preset_id) {
+                    if let Some(preset) = presets_for_sub.iter().find(|p| p.id == *preset_id) {
+                        let p = preset.clone();
                         view.update(cx, |this, cx| {
-                            this.apply_preset(*preset, window, cx);
+                            this.apply_preset(p, window, cx);
                         });
                     }
                 }
             },
         );
 
-        let catalog_rows = form
-            .model_mappings
-            .iter()
-            .map(|m| {
+        let catalog_rows = catalog_rows_data
+            .into_iter()
+            .map(|(dn, m, cw, re)| {
                 CatalogRowDraft::new(
-                    &m.display_name,
-                    &m.model,
-                    m.context_window,
-                    m.reasoning_effort.as_deref(),
+                    &dn,
+                    &m,
+                    cw,
+                    re.as_deref(),
                     &[],
                     window,
                     cx,
@@ -3638,17 +3805,18 @@ impl FormDraft {
             .collect();
 
         Self {
+            app,
             editing_id,
-            kind: form.kind,
-            name: field(window, cx, &form.name, "输入供应商名称，如 PackyCode"),
+            is_official,
+            name: field(window, cx, &name, "输入供应商名称，如 PackyCode"),
             api_key: cx.new(|cx| {
                 InputState::new(window, cx)
                     .placeholder("sk-...")
                     .masked(true)
-                    .default_value(form.api_key)
+                    .default_value(api_key)
             }),
-            base_url: field(window, cx, &form.base_url, "https://api.example.com/v1"),
-            model: field(window, cx, &form.model, "gpt-5.6-sol"),
+            base_url: field(window, cx, &base_url, "https://api.example.com/v1"),
+            model: field(window, cx, &model, "例如: gpt-5.6-sol / claude-3-7-sonnet"),
             preset_select,
             catalog_rows,
             fetched_models: Vec::new(),
@@ -3660,21 +3828,61 @@ impl FormDraft {
         }
     }
 
-    fn to_codex_form(&self, cx: &App) -> CodexForm {
-        let model_mappings = self
-            .catalog_rows
-            .iter()
-            .filter_map(|row| row.to_mapping(cx))
-            .collect();
+    fn to_provider_form(&self, cx: &App) -> ProviderForm {
+        let name = self.name.read(cx).value().to_string();
+        let api_key = self.api_key.read(cx).value().to_string();
+        let base_url = self.base_url.read(cx).value().to_string();
+        let model = self.model.read(cx).value().to_string();
 
-        CodexForm {
-            name: self.name.read(cx).value().to_string(),
-            website_url: String::new(),
-            kind: CodexKind::ResponsesThirdParty,
-            api_key: self.api_key.read(cx).value().to_string(),
-            base_url: self.base_url.read(cx).value().to_string(),
-            model: self.model.read(cx).value().to_string(),
-            model_mappings,
+        match self.app {
+            AppKind::Codex => {
+                let model_mappings = self
+                    .catalog_rows
+                    .iter()
+                    .filter_map(|row| row.to_codex_mapping(cx))
+                    .collect();
+                ProviderForm::Codex(CodexForm {
+                    name,
+                    website_url: String::new(),
+                    kind: if self.is_official { CodexKind::Official } else { CodexKind::ResponsesThirdParty },
+                    api_key,
+                    base_url,
+                    model,
+                    model_mappings,
+                })
+            }
+            AppKind::Claude => {
+                let model_mappings = self
+                    .catalog_rows
+                    .iter()
+                    .filter_map(|row| row.to_claude_mapping(cx))
+                    .collect();
+                ProviderForm::Claude(ClaudeForm {
+                    name,
+                    website_url: String::new(),
+                    kind: if self.is_official { ClaudeKind::Official } else { ClaudeKind::ThirdParty },
+                    api_key,
+                    base_url,
+                    model,
+                    model_mappings,
+                })
+            }
+            AppKind::Grok => {
+                let model_mappings = self
+                    .catalog_rows
+                    .iter()
+                    .filter_map(|row| row.to_grok_mapping(cx))
+                    .collect();
+                ProviderForm::Grok(GrokForm {
+                    name,
+                    website_url: String::new(),
+                    kind: if self.is_official { GrokKind::Official } else { GrokKind::ThirdParty },
+                    api_key,
+                    base_url,
+                    model,
+                    model_mappings,
+                })
+            }
         }
     }
 }
@@ -3698,7 +3906,7 @@ fn notify_success(message: impl Into<SharedString>, window: &mut Window, cx: &mu
     window.push_notification(Notification::success(message), cx);
 }
 
-fn empty_state(cx: &App) -> impl IntoElement {
+fn empty_state(app_name: &str, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     v_flex()
         .w_full()
@@ -3726,13 +3934,13 @@ fn empty_state(cx: &App) -> impl IntoElement {
                 .text_size(px(16.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme.foreground)
-                .child("还没有配置 Codex 供应商"),
+                .child(format!("还没有配置 {} 供应商", app_name)),
         )
         .child(
             div()
                 .text_size(px(12.))
                 .text_color(theme.muted_foreground)
-                .child("你可以点击右上角的「新建供应商」，或点击「导入 Live」从现有的 ~/.codex 快速导入。"),
+                .child("你可以点击右上角的「新建供应商」，快速添加并管理服务商。"),
         )
 }
 

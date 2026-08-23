@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use domain::{official_codex_provider, AppKind, Provider};
+use domain::{
+    official_claude_provider, official_codex_provider, official_grok_provider, AppKind, Provider,
+    OFFICIAL_CLAUDE_ID, OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -30,6 +33,8 @@ pub enum AppLanguage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
     pub codex_home: Option<PathBuf>,
+    pub claude_home: Option<PathBuf>,
+    pub grok_home: Option<PathBuf>,
     pub theme: ThemePreference,
     #[serde(default)]
     pub language: AppLanguage,
@@ -66,6 +71,8 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             codex_home: None,
+            claude_home: None,
+            grok_home: None,
             theme: ThemePreference::System,
             language: AppLanguage::ZhCn,
             main_apps: default_main_apps(),
@@ -116,7 +123,7 @@ impl Store {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
         let store = Self { conn, data_dir };
-        store.seed_official_codex()?;
+        store.seed_official_providers()?;
         Ok(store)
     }
 
@@ -272,13 +279,26 @@ impl Store {
         Ok(count > 0)
     }
 
-    fn seed_official_codex(&self) -> Result<(), StoreError> {
-        if self.get_provider(domain::OFFICIAL_CODEX_ID)?.is_some() {
-            return Ok(());
+    fn seed_official_providers(&self) -> Result<(), StoreError> {
+        // Seed Codex
+        if self.get_provider(OFFICIAL_CODEX_ID)?.is_none() {
+            let mut official = official_codex_provider();
+            official.created_at = now_secs();
+            self.upsert_provider(&official)?;
         }
-        let mut official = official_codex_provider();
-        official.created_at = now_secs();
-        self.upsert_provider(&official)
+        // Seed Claude
+        if self.get_provider(OFFICIAL_CLAUDE_ID)?.is_none() {
+            let mut official = official_claude_provider();
+            official.created_at = now_secs();
+            self.upsert_provider(&official)?;
+        }
+        // Seed Grok
+        if self.get_provider(OFFICIAL_GROK_ID)?.is_none() {
+            let mut official = official_grok_provider();
+            official.created_at = now_secs();
+            self.upsert_provider(&official)?;
+        }
+        Ok(())
     }
 }
 
@@ -337,7 +357,7 @@ mod tests {
     use super::*;
     use domain::{
         generate_third_party_auth, generate_third_party_config, new_provider_id, CodexKind,
-        CodexSettings, OFFICIAL_CODEX_ID,
+        CodexSettings, OFFICIAL_CLAUDE_ID, OFFICIAL_CODEX_ID, OFFICIAL_GROK_ID,
     };
 
     fn temp_store() -> (tempfile::TempDir, Store) {
@@ -349,9 +369,18 @@ mod tests {
     #[test]
     fn seeds_official_and_blocks_deleting_current() {
         let (_dir, store) = temp_store();
-        let list = store.list_providers(AppKind::Codex).unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, OFFICIAL_CODEX_ID);
+        let codex_list = store.list_providers(AppKind::Codex).unwrap();
+        assert_eq!(codex_list.len(), 1);
+        assert_eq!(codex_list[0].id, OFFICIAL_CODEX_ID);
+
+        let claude_list = store.list_providers(AppKind::Claude).unwrap();
+        assert_eq!(claude_list.len(), 1);
+        assert_eq!(claude_list[0].id, OFFICIAL_CLAUDE_ID);
+
+        let grok_list = store.list_providers(AppKind::Grok).unwrap();
+        assert_eq!(grok_list.len(), 1);
+        assert_eq!(grok_list[0].id, OFFICIAL_GROK_ID);
+
         store.set_current(AppKind::Codex, OFFICIAL_CODEX_ID).unwrap();
         let err = store.delete_provider(OFFICIAL_CODEX_ID).unwrap_err();
         assert!(matches!(err, StoreError::Conflict(_)));

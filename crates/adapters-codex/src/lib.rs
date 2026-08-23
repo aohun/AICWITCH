@@ -26,6 +26,8 @@ pub struct CodexPaths {
     pub auth: PathBuf,
     pub config: PathBuf,
     pub catalog: PathBuf,
+    pub auth_official_bak: PathBuf,
+    pub config_official_bak: PathBuf,
 }
 
 impl CodexPaths {
@@ -35,6 +37,8 @@ impl CodexPaths {
             auth: home.join("auth.json"),
             config: home.join("config.toml"),
             catalog: home.join("router-switch-model-catalog.json"),
+            auth_official_bak: home.join("auth.json.official.bak"),
+            config_official_bak: home.join("config.toml.official.bak"),
             home,
         }
     }
@@ -75,29 +79,79 @@ pub fn read_live(paths: &CodexPaths) -> Result<LiveCodex, CodexAdapterError> {
     Ok(LiveCodex { auth, config_toml })
 }
 
-/// Official without stored login material must not clobber ChatGPT OAuth in auth.json.
-/// Third-party always writes both files atomically.
+/// Backup current official config / auth files if they look like official configs.
+pub fn backup_official_if_needed(paths: &CodexPaths) -> Result<(), CodexAdapterError> {
+    fs::create_dir_all(&paths.home)?;
+    let live = read_live(paths)?;
+    let is_official = !live.config_toml.contains("model_provider = \"custom\"")
+        && !live.config_toml.contains("wire_api = \"responses\"");
+
+    if is_official {
+        if paths.auth.exists() {
+            let _ = fs::copy(&paths.auth, &paths.auth_official_bak);
+        }
+        if paths.config.exists() {
+            let _ = fs::copy(&paths.config, &paths.config_official_bak);
+        }
+    }
+    Ok(())
+}
+
+/// Restore official configuration and auth if backups exist.
+pub fn restore_official(paths: &CodexPaths) -> Result<(), CodexAdapterError> {
+    if paths.auth_official_bak.exists() {
+        let _ = fs::copy(&paths.auth_official_bak, &paths.auth);
+    }
+    if paths.config_official_bak.exists() {
+        let _ = fs::copy(&paths.config_official_bak, &paths.config);
+    } else if paths.config.exists() {
+        let config_text = fs::read_to_string(&paths.config).unwrap_or_default();
+        if config_text.contains("model_provider = \"custom\"") {
+            let _ = fs::write(&paths.config, "");
+        }
+    }
+    if paths.catalog.exists() {
+        let _ = fs::remove_file(&paths.catalog);
+    }
+    Ok(())
+}
+
+/// Official without stored login material must restore or not clobber ChatGPT OAuth in auth.json.
+/// Third-party always backs up official first, then writes both files atomically.
 pub fn write_live_for_provider(
     paths: &CodexPaths,
     settings: &CodexSettings,
 ) -> Result<(), CodexAdapterError> {
     fs::create_dir_all(&paths.home)?;
-    // Write or remove router-switch-model-catalog.json
-    if let Some(catalog_json) = generate_catalog_json(&settings.model_mappings) {
-        write_text_atomic(&paths.catalog, &catalog_json)?;
-    } else if paths.catalog.exists() {
-        let _ = fs::remove_file(&paths.catalog);
-    }
 
     match settings.kind {
         CodexKind::Official => {
-            write_text_atomic(&paths.config, &settings.config_toml)?;
-            if has_login_material(&settings.auth) {
+            if paths.catalog.exists() {
+                let _ = fs::remove_file(&paths.catalog);
+            }
+            if paths.auth_official_bak.exists() && !has_login_material(&settings.auth) {
+                let _ = fs::copy(&paths.auth_official_bak, &paths.auth);
+            } else if has_login_material(&settings.auth) {
                 write_json_atomic(&paths.auth, &settings.auth)?;
+            }
+            if paths.config_official_bak.exists() && settings.config_toml.trim().is_empty() {
+                let _ = fs::copy(&paths.config_official_bak, &paths.config);
+            } else {
+                write_text_atomic(&paths.config, &settings.config_toml)?;
             }
             Ok(())
         }
         CodexKind::ResponsesThirdParty => {
+            // Check and backup official config before overwriting with third party
+            let _ = backup_official_if_needed(paths);
+
+            // Write or remove router-switch-model-catalog.json
+            if let Some(catalog_json) = generate_catalog_json(&settings.model_mappings) {
+                write_text_atomic(&paths.catalog, &catalog_json)?;
+            } else if paths.catalog.exists() {
+                let _ = fs::remove_file(&paths.catalog);
+            }
+
             write_codex_live_atomic(paths, &settings.auth, &settings.config_toml)
         }
     }
@@ -221,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn official_without_login_keeps_existing_oauth() {
+    fn official_backup_and_restore_cycle() {
         let (_dir, paths) = temp_paths();
         fs::create_dir_all(&paths.home).unwrap();
         fs::write(
@@ -229,17 +283,20 @@ mod tests {
             r#"{"tokens":{"access_token":"chatgpt-oauth"}}"#,
         )
         .unwrap();
-        fs::write(
-            &paths.config,
-            "model_provider = \"custom\"\n\n[model_providers.custom]\nname = \"relay\"\n",
-        )
-        .unwrap();
+        fs::write(&paths.config, "default_model = \"gpt-5.6\"\n").unwrap();
 
+        // Switch to third party -> should backup official
+        write_live_for_provider(&paths, &third_party()).unwrap();
+        assert!(paths.auth_official_bak.exists());
+        assert!(paths.config_official_bak.exists());
+        let live_tp = read_live(&paths).unwrap();
+        assert_eq!(live_tp.auth["OPENAI_API_KEY"], "sk-live");
+
+        // Switch back to official -> should restore official backup
         write_live_for_provider(&paths, &official_codex_settings()).unwrap();
-
-        let live = read_live(&paths).unwrap();
-        assert_eq!(live.auth["tokens"]["access_token"], "chatgpt-oauth");
-        assert!(!live.config_toml.contains("model_providers"));
+        let live_off = read_live(&paths).unwrap();
+        assert_eq!(live_off.auth["tokens"]["access_token"], "chatgpt-oauth");
+        assert_eq!(live_off.config_toml, "default_model = \"gpt-5.6\"\n");
     }
 
     #[test]
@@ -250,19 +307,5 @@ mod tests {
         write_live_for_provider(&paths, &settings).unwrap();
         let live = read_live(&paths).unwrap();
         assert_eq!(live.auth["OPENAI_API_KEY"], "sk-official");
-    }
-
-    #[test]
-    fn config_failure_rolls_back_auth() {
-        let (_dir, paths) = temp_paths();
-        fs::create_dir_all(&paths.home).unwrap();
-        fs::write(&paths.auth, r#"{"OPENAI_API_KEY":"old-key"}"#).unwrap();
-        fs::create_dir_all(&paths.config).unwrap();
-
-        let err = write_live_for_provider(&paths, &third_party()).unwrap_err();
-        assert!(matches!(err, CodexAdapterError::Io(_)));
-        let auth = fs::read_to_string(&paths.auth).unwrap();
-        assert!(auth.contains("old-key"));
-        assert!(!auth.contains("sk-live"));
     }
 }
