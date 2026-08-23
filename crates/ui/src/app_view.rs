@@ -3855,12 +3855,11 @@ impl RouterApp {
                                                         .child(
                                                             if is_up {
                                                                 let tid = tool_id.clone();
-                                                                let lver = tool.latest_version.clone().unwrap_or_default();
                                                                 Button::new(SharedString::from(format!("tool-up-{}", tool_id)))
                                                                     .primary()
                                                                     .small()
                                                                     .icon(IconName::ArrowUp)
-                                                                    .label(if lver.is_empty() { "升级".to_string() } else { format!("升级 {}", lver) })
+                                                                    .label(if is_en { "Upgrade" } else { "升级" })
                                                                     .on_click(cx.listener(move |this, _, window, cx| {
                                                                         this.run_tool_upgrade(&tid, window, cx);
                                                                     }))
