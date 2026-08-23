@@ -25,6 +25,29 @@ use crate::theme::{self, StatusColors};
 
 pub const CHROME_HEIGHT: f32 = 46.;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DragAppId(pub String);
+
+pub struct DragGhostView {
+    pub label: SharedString,
+}
+
+impl Render for DragGhostView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(12.))
+            .py(px(6.))
+            .rounded(px(8.))
+            .bg(cx.theme().primary)
+            .text_color(cx.theme().primary_foreground)
+            .text_size(px(13.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .shadow_md()
+            .opacity(0.9)
+            .child(self.label.clone())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PresetSelectItem {
     pub preset: CodexPreset,
@@ -541,6 +564,31 @@ impl RouterApp {
         }
     }
 
+    fn move_main_app(
+        &mut self,
+        source_id: &str,
+        target_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if source_id == target_id {
+            return;
+        }
+        let Some(from_pos) = self.main_apps.iter().position(|id| id == source_id) else {
+            return;
+        };
+        let Some(to_pos) = self.main_apps.iter().position(|id| id == target_id) else {
+            return;
+        };
+        let item = self.main_apps.remove(from_pos);
+        self.main_apps.insert(to_pos, item);
+        if let Err(err) = self.workspace.reorder_main_apps(self.main_apps.clone()) {
+            self.fail(err, window, cx);
+            return;
+        }
+        cx.notify();
+    }
+
     fn toggle_launch_on_startup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_val = !self.launch_on_startup;
         self.launch_on_startup = new_val;
@@ -959,10 +1007,205 @@ impl RouterApp {
             })
     }
 
+    fn draggable_nav_item(
+        &self,
+        app_id: &'static str,
+        icon: impl Into<Icon>,
+        icon_color: Option<Hsla>,
+        label: &'static str,
+        route: Route,
+        badge: Option<String>,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let active = self.route == route;
+        let accent = cx.theme().sidebar_accent;
+        let fg = cx.theme().sidebar_foreground;
+        let app_id_str = app_id.to_string();
+        let target_app_id = app_id.to_string();
+
+        div()
+            .id(SharedString::from(format!("nav-app-{}", app_id)))
+            .h(px(38.))
+            .w_full()
+            .px(px(10.))
+            .rounded(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .text_size(px(14.))
+            .text_color(if disabled { fg.opacity(0.4) } else { fg })
+            .cursor_pointer()
+            .when(active, |this| this.bg(accent).font_weight(FontWeight::SEMIBOLD))
+            .when(!disabled, |this| this.hover(|this| this.bg(accent)))
+            .child(
+                Icon::new(icon)
+                    .size(px(18.))
+                    .flex_shrink_0()
+                    .text_color(icon_color.unwrap_or(if active { cx.theme().foreground } else { fg.opacity(0.85) })),
+            )
+            .child(div().flex_1().truncate().child(label))
+            .when_some(badge, |this, b| {
+                this.child(
+                    div()
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded(px(6.))
+                        .bg(if active { cx.theme().primary } else { accent })
+                        .text_size(px(11.))
+                        .text_color(if active { cx.theme().primary_foreground } else { fg.opacity(0.6) })
+                        .child(b),
+                )
+            })
+            .when(!disabled, |this| {
+                this.on_click(cx.listener(move |this, _, _, cx| this.set_route(route, cx)))
+            })
+            .on_drag(DragAppId(app_id_str), {
+                let ghost_label = SharedString::from(label);
+                move |_, _, _, cx| {
+                    let label = ghost_label.clone();
+                    cx.new(|_| DragGhostView { label })
+                }
+            })
+            .on_drop(cx.listener(move |this, dragged: &DragAppId, window, cx| {
+                this.move_main_app(&dragged.0, &target_app_id, window, cx);
+            }))
+    }
+
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.providers.len();
         let border = cx.theme().sidebar_border;
         let is_en = self.language == AppLanguage::En;
+
+        let mut app_nav_items = Vec::new();
+        for app_id in &self.main_apps {
+            let item = match app_id.as_str() {
+                "amp" => Some(self.draggable_nav_item(
+                    "amp",
+                    CustomIcon::Amp,
+                    Some(rgb(0xEA580C).into()),
+                    "Amp",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "claude" => Some(self.draggable_nav_item(
+                    "claude",
+                    CustomIcon::Claude,
+                    Some(rgb(0xD97757).into()),
+                    "Claude Code",
+                    Route::Claude,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "claude-desktop" => Some(self.draggable_nav_item(
+                    "claude-desktop",
+                    CustomIcon::Claude,
+                    Some(rgb(0xD97757).into()),
+                    "Claude Desktop",
+                    Route::Claude,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "codex" => Some(self.draggable_nav_item(
+                    "codex",
+                    CustomIcon::OpenAI,
+                    Some(rgb(0x10A37F).into()),
+                    "Codex CLI",
+                    Route::Codex,
+                    Some(format!("{count}")),
+                    false,
+                    cx,
+                )),
+                "cursor" => Some(self.draggable_nav_item(
+                    "cursor",
+                    CustomIcon::Cursor,
+                    Some(rgb(0x6366F1).into()),
+                    "Cursor CLI",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "deepseek" | "gemini" => Some(self.draggable_nav_item(
+                    "deepseek",
+                    CustomIcon::DeepSeek,
+                    Some(rgb(0x3B82F6).into()),
+                    "DeepSeek Harness",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "fx" | "hermes" => Some(self.draggable_nav_item(
+                    "fx",
+                    CustomIcon::Fx,
+                    Some(rgb(0x4B5563).into()),
+                    "Fx",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "opencode" => Some(self.draggable_nav_item(
+                    "opencode",
+                    CustomIcon::OpenCode,
+                    Some(rgb(0x0284C7).into()),
+                    "OpenCode",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "grok" => Some(self.draggable_nav_item(
+                    "grok",
+                    CustomIcon::Grok,
+                    Some(rgb(0x8B5CF6).into()),
+                    "Grok Build",
+                    Route::Grok,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "kimi" => Some(self.draggable_nav_item(
+                    "kimi",
+                    CustomIcon::Kimi,
+                    Some(rgb(0x2563EB).into()),
+                    "Kimi Code",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "ohmypi" | "openclaw" => Some(self.draggable_nav_item(
+                    "ohmypi",
+                    CustomIcon::OhMyPi,
+                    Some(rgb(0xEC4899).into()),
+                    "Oh My Pi",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                "pi" => Some(self.draggable_nav_item(
+                    "pi",
+                    CustomIcon::Pi,
+                    Some(rgb(0x3B82F6).into()),
+                    "Pi",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                )),
+                _ => None,
+            };
+            if let Some(i) = item {
+                app_nav_items.push(i);
+            }
+        }
 
         v_flex()
             .w(px(210.))
@@ -982,150 +1225,7 @@ impl RouterApp {
                 false,
                 cx,
             ))
-            .when(self.main_apps.iter().any(|a| a == "amp"), |this| {
-                this.child(self.nav_item(
-                    "nav-amp",
-                    CustomIcon::Amp,
-                    Some(rgb(0xEA580C).into()),
-                    "Amp",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "claude"), |this| {
-                this.child(self.nav_item(
-                    "nav-claude",
-                    CustomIcon::Claude,
-                    Some(rgb(0xD97757).into()), // Claude Terracotta Orange
-                    "Claude Code",
-                    Route::Claude,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "claude-desktop"), |this| {
-                this.child(self.nav_item(
-                    "nav-claude-desktop",
-                    CustomIcon::Claude,
-                    Some(rgb(0xD97757).into()),
-                    "Claude Desktop",
-                    Route::Claude,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "codex"), |this| {
-                this.child(self.nav_item(
-                    "nav-codex",
-                    CustomIcon::OpenAI,
-                    Some(rgb(0x10A37F).into()), // OpenAI Emerald Green
-                    "Codex CLI",
-                    Route::Codex,
-                    Some(format!("{count}")),
-                    false,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "cursor"), |this| {
-                this.child(self.nav_item(
-                    "nav-cursor",
-                    CustomIcon::Cursor,
-                    Some(rgb(0x6366F1).into()),
-                    "Cursor CLI",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "deepseek" || a == "gemini"), |this| {
-                this.child(self.nav_item(
-                    "nav-deepseek",
-                    CustomIcon::DeepSeek,
-                    Some(rgb(0x3B82F6).into()),
-                    "DeepSeek Harness",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "fx" || a == "hermes"), |this| {
-                this.child(self.nav_item(
-                    "nav-fx",
-                    CustomIcon::Fx,
-                    Some(rgb(0x4B5563).into()),
-                    "Fx",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "opencode"), |this| {
-                this.child(self.nav_item(
-                    "nav-opencode",
-                    CustomIcon::OpenCode,
-                    Some(rgb(0x0284C7).into()),
-                    "OpenCode",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "grok"), |this| {
-                this.child(self.nav_item(
-                    "nav-grok",
-                    CustomIcon::Grok,
-                    Some(rgb(0x8B5CF6).into()), // xAI Violet
-                    "Grok Build",
-                    Route::Grok,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "kimi"), |this| {
-                this.child(self.nav_item(
-                    "nav-kimi",
-                    CustomIcon::Kimi,
-                    Some(rgb(0x2563EB).into()),
-                    "Kimi Code",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "ohmypi" || a == "openclaw"), |this| {
-                this.child(self.nav_item(
-                    "nav-ohmypi",
-                    CustomIcon::OhMyPi,
-                    Some(rgb(0xEC4899).into()),
-                    "Oh My Pi",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "pi"), |this| {
-                this.child(self.nav_item(
-                    "nav-pi",
-                    CustomIcon::Pi,
-                    Some(rgb(0x3B82F6).into()),
-                    "Pi",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
+            .children(app_nav_items)
             .child(div().flex_1())
             .child(self.nav_item(
                 "nav-notifications",

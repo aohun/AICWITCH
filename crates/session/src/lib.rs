@@ -102,6 +102,13 @@ impl Workspace {
         Ok(is_enabled)
     }
 
+    pub fn reorder_main_apps(&self, new_order: Vec<String>) -> Result<(), SessionError> {
+        let mut settings = self.store.settings()?;
+        settings.main_apps = new_order;
+        self.store.save_settings(&settings)?;
+        Ok(())
+    }
+
     pub fn set_launch_on_startup(&self, enabled: bool) -> Result<(), SessionError> {
         let mut settings = self.store.settings()?;
         settings.launch_on_startup = enabled;
@@ -436,5 +443,22 @@ mod tests {
         let ws = Workspace::open(&db, None).unwrap();
         assert_eq!(ws.codex_home(), second.as_path());
         assert_eq!(ws.settings().unwrap().codex_home.as_deref(), Some(second.as_path()));
+    }
+
+    #[test]
+    fn reorder_main_apps_persists() {
+        let (dir, ws) = temp_workspace();
+        let initial = ws.settings().unwrap().main_apps;
+        assert_eq!(initial, vec!["codex", "claude", "grok"]);
+
+        let custom_order = vec!["cursor".to_string(), "codex".to_string(), "claude".to_string()];
+        ws.reorder_main_apps(custom_order.clone()).unwrap();
+
+        let loaded = ws.settings().unwrap().main_apps;
+        assert_eq!(loaded, custom_order);
+
+        drop(ws);
+        let ws2 = Workspace::open(dir.path().join("app.db"), None).unwrap();
+        assert_eq!(ws2.settings().unwrap().main_apps, custom_order);
     }
 }
