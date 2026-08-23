@@ -73,6 +73,34 @@ impl SelectItem for PresetSelectItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSelectItem {
+    pub name: String,
+}
+
+impl SelectItem for ModelSelectItem {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.name.clone().into()
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.name
+    }
+
+    fn render(&self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        div()
+            .text_size(px(12.))
+            .text_color(cx.theme().foreground)
+            .child(self.name.clone())
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        self.name.to_lowercase().contains(&query.to_lowercase())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReasoningOptionItem {
     pub label: String,
     pub value: Option<String>,
@@ -102,6 +130,8 @@ pub struct CatalogRowDraft {
     pub model: Entity<InputState>,
     pub context_window: Entity<InputState>,
     pub reasoning_effort: Entity<SelectState<Vec<ReasoningOptionItem>>>,
+    pub model_select: Option<Entity<SelectState<Vec<ModelSelectItem>>>>,
+    pub _model_select_sub: Option<Subscription>,
 }
 
 impl CatalogRowDraft {
@@ -110,6 +140,7 @@ impl CatalogRowDraft {
         model_val: &str,
         context_window_val: Option<u64>,
         reasoning_effort_val: Option<&str>,
+        fetched_models: &[String],
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -161,12 +192,95 @@ impl CatalogRowDraft {
             SelectState::new(options, index_path, window, cx)
         });
 
+        let (model_select, _model_select_sub) = if !fetched_models.is_empty() {
+            let items: Vec<ModelSelectItem> = fetched_models
+                .iter()
+                .map(|m| ModelSelectItem { name: m.clone() })
+                .collect();
+            let selected_model_idx = fetched_models
+                .iter()
+                .position(|m| m == model_val)
+                .map(|i| gpui_component::IndexPath::default().row(i));
+            let select = cx.new(|cx| {
+                SelectState::new(items, selected_model_idx, window, cx).searchable(true)
+            });
+            let model_state = model.clone();
+            let display_name_state = display_name.clone();
+            let sub = window.subscribe(
+                &select,
+                cx,
+                move |_, event: &SelectEvent<Vec<ModelSelectItem>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(m)) = event {
+                        let val = m.clone();
+                        model_state.update(cx, |input, cx| input.set_value(val.clone(), window, cx));
+                        display_name_state.update(cx, |input, cx| {
+                            let curr = input.value().to_string();
+                            if curr.trim().is_empty() {
+                                input.set_value(val, window, cx);
+                            }
+                        });
+                    }
+                },
+            );
+            (Some(select), Some(sub))
+        } else {
+            (None, None)
+        };
+
         Self {
             display_name,
             model,
             context_window,
             reasoning_effort,
+            model_select,
+            _model_select_sub,
         }
+    }
+
+    pub fn set_fetched_models(
+        &mut self,
+        fetched_models: &[String],
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if fetched_models.is_empty() {
+            self.model_select = None;
+            self._model_select_sub = None;
+            return;
+        }
+
+        let current_val = self.model.read(cx).value().to_string();
+        let items: Vec<ModelSelectItem> = fetched_models
+            .iter()
+            .map(|m| ModelSelectItem { name: m.clone() })
+            .collect();
+        let selected_model_idx = fetched_models
+            .iter()
+            .position(|m| m == &current_val)
+            .map(|i| gpui_component::IndexPath::default().row(i));
+        let select = cx.new(|cx| {
+            SelectState::new(items, selected_model_idx, window, cx).searchable(true)
+        });
+        let model_state = self.model.clone();
+        let display_name_state = self.display_name.clone();
+        let sub = window.subscribe(
+            &select,
+            cx,
+            move |_, event: &SelectEvent<Vec<ModelSelectItem>>, window, cx| {
+                if let SelectEvent::Confirm(Some(m)) = event {
+                    let val = m.clone();
+                    model_state.update(cx, |input, cx| input.set_value(val.clone(), window, cx));
+                    display_name_state.update(cx, |input, cx| {
+                        let curr = input.value().to_string();
+                        if curr.trim().is_empty() {
+                            input.set_value(val, window, cx);
+                        }
+                    });
+                }
+            },
+        );
+        self.model_select = Some(select);
+        self._model_select_sub = Some(sub);
     }
 
     pub fn to_mapping(&self, cx: &App) -> Option<CodexModelMapping> {
@@ -231,8 +345,12 @@ struct FormDraft {
     model: Entity<InputState>,
     preset_select: Entity<SelectState<Vec<PresetSelectItem>>>,
     catalog_rows: Vec<CatalogRowDraft>,
+    fetched_models: Vec<String>,
+    has_fetched_models: bool,
+    default_model_select: Option<Entity<SelectState<Vec<ModelSelectItem>>>>,
     is_fetching_models: bool,
     _preset_sub: Option<Subscription>,
+    _default_model_sub: Option<Subscription>,
 }
 
 impl RouterApp {
@@ -464,7 +582,6 @@ impl RouterApp {
 
     fn fetch_models_for_form(
         &mut self,
-        populate_catalog: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -511,33 +628,54 @@ impl RouterApp {
                                     );
 
                                     if let Some(form) = this.form.as_mut() {
-                                        if populate_catalog {
-                                            for m in &models {
-                                                let exists = form
-                                                    .catalog_rows
-                                                    .iter()
-                                                    .any(|r| r.model.read(cx).value().trim() == m.as_str());
-                                                if !exists {
-                                                    form.catalog_rows.push(CatalogRowDraft::new(
-                                                        m,
-                                                        m,
-                                                        Some(128_000),
-                                                        None,
-                                                        window,
-                                                        cx,
-                                                    ));
-                                                }
-                                            }
-                                        } else if let Some(first) = models.first() {
-                                            let current = form.model.read(cx).value().to_string();
-                                            if current.trim().is_empty()
-                                                || current == domain::DEFAULT_CODEX_MODEL
+                                        form.fetched_models = models.clone();
+                                        form.has_fetched_models = true;
+
+                                        // Auto-set default model if empty or generic default
+                                        let current_model = form.model.read(cx).value().to_string();
+                                        if let Some(first) = models.first() {
+                                            if current_model.trim().is_empty()
+                                                || current_model == domain::DEFAULT_CODEX_MODEL
                                             {
                                                 let first = first.clone();
                                                 form.model.update(cx, |input: &mut InputState, cx| {
                                                     input.set_value(first, window, cx);
                                                 });
                                             }
+                                        }
+
+                                        // Setup default model dropdown selector
+                                        let items: Vec<ModelSelectItem> = models
+                                            .iter()
+                                            .map(|m| ModelSelectItem { name: m.clone() })
+                                            .collect();
+                                        let updated_model_val = form.model.read(cx).value().to_string();
+                                        let selected_idx = models
+                                            .iter()
+                                            .position(|m| m == &updated_model_val)
+                                            .map(|i| gpui_component::IndexPath::default().row(i));
+                                        let default_select = cx.new(|cx| {
+                                            SelectState::new(items, selected_idx, window, cx).searchable(true)
+                                        });
+                                        let form_model_state = form.model.clone();
+                                        let default_sub = window.subscribe(
+                                            &default_select,
+                                            cx,
+                                            move |_, event: &SelectEvent<Vec<ModelSelectItem>>, window, cx| {
+                                                if let SelectEvent::Confirm(Some(m)) = event {
+                                                    let val = m.clone();
+                                                    form_model_state.update(cx, |input, cx| {
+                                                        input.set_value(val, window, cx);
+                                                    });
+                                                }
+                                            },
+                                        );
+                                        form.default_model_select = Some(default_select);
+                                        form._default_model_sub = Some(default_sub);
+
+                                        // Update existing catalog rows
+                                        for row in &mut form.catalog_rows {
+                                            row.set_fetched_models(&models, window, cx);
                                         }
                                     }
                                 }
@@ -556,11 +694,13 @@ impl RouterApp {
 
     fn add_catalog_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(form) = self.form.as_mut() {
+            let fetched = form.fetched_models.clone();
             form.catalog_rows.push(CatalogRowDraft::new(
                 "",
                 "",
                 Some(128_000),
                 None,
+                &fetched,
                 window,
                 cx,
             ));
@@ -1739,16 +1879,27 @@ impl RouterApp {
                                         .gap(px(8.))
                                         .items_center()
                                         .child(
-                                            div().flex_1().child(Input::new(&form.model))
+                                            div().flex_1().child(Input::new(&form.model).cleanable(true))
                                         )
+                                        .when_some(form.default_model_select.as_ref(), |this, select| {
+                                            this.child(
+                                                div()
+                                                    .w(px(240.))
+                                                    .child(
+                                                        Select::new(select)
+                                                            .placeholder("选择模型...")
+                                                            .search_placeholder("搜索模型..."),
+                                                    ),
+                                            )
+                                        })
                                         .child(
                                             Button::new("fetch-models-btn")
                                                 .outline()
                                                 .icon(IconName::ArrowDown)
-                                                .tooltip("从端点获取模型列表并填入推荐模型")
+                                                .tooltip("从端点拉取可用模型列表")
                                                 .disabled(form.is_fetching_models)
                                                 .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.fetch_models_for_form(false, window, cx);
+                                                    this.fetch_models_for_form(window, cx);
                                                 })),
                                         ),
                                 ),
@@ -1784,30 +1935,28 @@ impl RouterApp {
                                         ),
                                 )
                                 .child(
-                                    h_flex()
-                                        .items_center()
-                                        .gap(px(8.))
-                                        .child(
-                                            Button::new("fetch-catalog-btn")
-                                                .outline()
-                                                .small()
-                                                .icon(IconName::ArrowDown)
-                                                .label("获取模型列表")
-                                                .disabled(form.is_fetching_models)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.fetch_models_for_form(true, window, cx);
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("add-mapping-btn")
-                                                .primary()
-                                                .small()
-                                                .icon(IconName::Plus)
-                                                .label("添加模型")
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.add_catalog_row(window, cx);
-                                                })),
-                                        ),
+                                    if form.has_fetched_models || !form.catalog_rows.is_empty() {
+                                        Button::new("add-mapping-btn")
+                                            .primary()
+                                            .small()
+                                            .icon(IconName::Plus)
+                                            .label("新增映射")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.add_catalog_row(window, cx);
+                                            }))
+                                            .into_any_element()
+                                    } else {
+                                        Button::new("fetch-catalog-btn")
+                                            .outline()
+                                            .small()
+                                            .icon(IconName::ArrowDown)
+                                            .label("拉取模型")
+                                            .disabled(form.is_fetching_models)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.fetch_models_for_form(window, cx);
+                                            }))
+                                            .into_any_element()
+                                    },
                                 ),
                         )
                         .child(
@@ -1832,7 +1981,11 @@ impl RouterApp {
                                         div()
                                             .text_size(px(12.))
                                             .text_color(theme.muted_foreground)
-                                            .child("点击上方「获取模型列表」可批量拉取，或点击「添加模型」手动新增"),
+                                            .child(if form.has_fetched_models {
+                                                "已成功获取可用模型列表，点击右上角「新增映射」添加映射规则"
+                                            } else {
+                                                "点击「拉取模型」获取供应商可用模型，或点击上方「新增映射」直接添加"
+                                            }),
                                     )
                                     .into_any_element()
                             } else {
@@ -1850,7 +2003,7 @@ impl RouterApp {
                                             .bg(theme.secondary.opacity(0.6))
                                             .child(
                                                 div()
-                                                    .w(px(180.))
+                                                    .w(px(200.))
                                                     .text_size(px(12.))
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(theme.muted_foreground)
@@ -1866,7 +2019,7 @@ impl RouterApp {
                                             )
                                             .child(
                                                 div()
-                                                    .w(px(110.))
+                                                    .w(px(120.))
                                                     .text_size(px(12.))
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(theme.muted_foreground)
@@ -1902,17 +2055,33 @@ impl RouterApp {
                                                 .py(px(3.))
                                                 .child(
                                                     div()
-                                                        .w(px(180.))
+                                                        .w(px(200.))
                                                         .child(Input::new(&row.display_name).small().cleanable(true)),
                                                 )
                                                 .child(
-                                                    div()
+                                                    h_flex()
                                                         .flex_1()
-                                                        .child(Input::new(&row.model).small().cleanable(true)),
+                                                        .items_center()
+                                                        .gap(px(6.))
+                                                        .child(
+                                                            div().flex_1().child(Input::new(&row.model).small().cleanable(true))
+                                                        )
+                                                        .when_some(row.model_select.as_ref(), |this, select| {
+                                                            this.child(
+                                                                div()
+                                                                    .w(px(160.))
+                                                                    .child(
+                                                                        Select::new(select)
+                                                                            .small()
+                                                                            .placeholder("选择模型")
+                                                                            .search_placeholder("搜索模型..."),
+                                                                    ),
+                                                            )
+                                                        }),
                                                 )
                                                 .child(
                                                     div()
-                                                        .w(px(110.))
+                                                        .w(px(120.))
                                                         .child(Input::new(&row.context_window).small()),
                                                 )
                                                 .child(
@@ -2136,6 +2305,7 @@ impl FormDraft {
                     &m.model,
                     m.context_window,
                     m.reasoning_effort.as_deref(),
+                    &[],
                     window,
                     cx,
                 )
@@ -2156,8 +2326,12 @@ impl FormDraft {
             model: field(window, cx, &form.model, "gpt-5.6-sol"),
             preset_select,
             catalog_rows,
+            fetched_models: Vec::new(),
+            has_fetched_models: false,
+            default_model_select: None,
             is_fetching_models: false,
             _preset_sub: Some(_preset_sub),
+            _default_model_sub: None,
         }
     }
 
