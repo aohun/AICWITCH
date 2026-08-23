@@ -350,6 +350,22 @@ pub enum UsageMetric {
     Tokens,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageWindowSelectItem {
+    pub choice: UsageWindowChoice,
+    pub label: String,
+}
+
+impl SelectItem for UsageWindowSelectItem {
+    type Value = UsageWindowChoice;
+    fn title(&self) -> SharedString {
+        self.label.clone().into()
+    }
+    fn value(&self) -> &Self::Value {
+        &self.choice
+    }
+}
+
 pub struct RouterApp {
     workspace: Workspace,
     providers: Vec<Provider>,
@@ -366,6 +382,8 @@ pub struct RouterApp {
     usage_view_mode: UsageViewMode,
     usage_window: UsageWindowChoice,
     usage_metric: UsageMetric,
+    usage_window_select: Entity<SelectState<Vec<UsageWindowSelectItem>>>,
+    _usage_window_sub: Option<Subscription>,
     search_input: Entity<InputState>,
     settings_search_input: Entity<InputState>,
     last_error: Option<SharedString>,
@@ -404,6 +422,46 @@ impl RouterApp {
             InputState::new(window, cx).placeholder("搜索设置...")
         });
 
+        let window_items = vec![
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Days7,
+                label: if settings.language == AppLanguage::En { "Last 7 Days".into() } else { "过去 7 天".into() },
+            },
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Days30,
+                label: if settings.language == AppLanguage::En { "Last 30 Days".into() } else { "过去 30 天".into() },
+            },
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Days90,
+                label: if settings.language == AppLanguage::En { "Last 90 Days".into() } else { "过去 90 天".into() },
+            },
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Year1,
+                label: if settings.language == AppLanguage::En { "Last 1 Year".into() } else { "过去 1 年".into() },
+            },
+        ];
+        let usage_window_select = cx.new(|cx| {
+            SelectState::new(
+                window_items,
+                Some(gpui_component::IndexPath::default().row(1)),
+                window,
+                cx,
+            )
+        });
+
+        let usage_window_sub = cx.subscribe(
+            &usage_window_select,
+            |this: &mut RouterApp,
+             _emitter: Entity<SelectState<Vec<UsageWindowSelectItem>>>,
+             event: &SelectEvent<Vec<UsageWindowSelectItem>>,
+             cx: &mut Context<Self>| {
+                if let SelectEvent::Confirm(Some(choice)) = event {
+                    this.usage_window = *choice;
+                    cx.notify();
+                }
+            },
+        );
+
         let mut app = Self {
             workspace,
             providers: Vec::new(),
@@ -420,6 +478,8 @@ impl RouterApp {
             usage_view_mode: UsageViewMode::Daily,
             usage_window: UsageWindowChoice::Days30,
             usage_metric: UsageMetric::Cost,
+            usage_window_select,
+            _usage_window_sub: Some(usage_window_sub),
             search_input,
             settings_search_input,
             last_error: None,
@@ -922,15 +982,15 @@ impl RouterApp {
                 false,
                 cx,
             ))
-            .when(self.main_apps.iter().any(|a| a == "codex"), |this| {
+            .when(self.main_apps.iter().any(|a| a == "amp"), |this| {
                 this.child(self.nav_item(
-                    "nav-codex",
-                    CustomIcon::OpenAI,
-                    Some(rgb(0x10A37F).into()), // OpenAI Emerald Green
-                    "Codex",
+                    "nav-amp",
+                    CustomIcon::Amp,
+                    Some(rgb(0xEA580C).into()),
+                    "Amp",
                     Route::Codex,
-                    Some(format!("{count}")),
-                    false,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
                     cx,
                 ))
             })
@@ -958,12 +1018,60 @@ impl RouterApp {
                     cx,
                 ))
             })
-            .when(self.main_apps.iter().any(|a| a == "gemini"), |this| {
+            .when(self.main_apps.iter().any(|a| a == "codex"), |this| {
                 this.child(self.nav_item(
-                    "nav-gemini",
-                    IconName::Star,
-                    Some(rgb(0x2563EB).into()),
-                    "Gemini",
+                    "nav-codex",
+                    CustomIcon::OpenAI,
+                    Some(rgb(0x10A37F).into()), // OpenAI Emerald Green
+                    "Codex CLI",
+                    Route::Codex,
+                    Some(format!("{count}")),
+                    false,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "cursor"), |this| {
+                this.child(self.nav_item(
+                    "nav-cursor",
+                    CustomIcon::Cursor,
+                    Some(rgb(0x6366F1).into()),
+                    "Cursor CLI",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "deepseek" || a == "gemini"), |this| {
+                this.child(self.nav_item(
+                    "nav-deepseek",
+                    CustomIcon::DeepSeek,
+                    Some(rgb(0x3B82F6).into()),
+                    "DeepSeek Harness",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "fx" || a == "hermes"), |this| {
+                this.child(self.nav_item(
+                    "nav-fx",
+                    CustomIcon::Fx,
+                    Some(rgb(0x4B5563).into()),
+                    "Fx",
+                    Route::Codex,
+                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
+                    true,
+                    cx,
+                ))
+            })
+            .when(self.main_apps.iter().any(|a| a == "opencode"), |this| {
+                this.child(self.nav_item(
+                    "nav-opencode",
+                    CustomIcon::OpenCode,
+                    Some(rgb(0x0284C7).into()),
+                    "OpenCode",
                     Route::Codex,
                     Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
                     true,
@@ -982,36 +1090,24 @@ impl RouterApp {
                     cx,
                 ))
             })
-            .when(self.main_apps.iter().any(|a| a == "opencode"), |this| {
+            .when(self.main_apps.iter().any(|a| a == "kimi"), |this| {
                 this.child(self.nav_item(
-                    "nav-opencode",
-                    IconName::SquareTerminal,
-                    Some(rgb(0x0284C7).into()),
-                    "OpenCode",
+                    "nav-kimi",
+                    CustomIcon::Kimi,
+                    Some(rgb(0x2563EB).into()),
+                    "Kimi Code",
                     Route::Codex,
                     Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
                     true,
                     cx,
                 ))
             })
-            .when(self.main_apps.iter().any(|a| a == "openclaw"), |this| {
+            .when(self.main_apps.iter().any(|a| a == "ohmypi" || a == "openclaw"), |this| {
                 this.child(self.nav_item(
-                    "nav-openclaw",
-                    IconName::Bot,
-                    Some(rgb(0xDC2626).into()),
-                    "OpenClaw",
-                    Route::Codex,
-                    Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
-                    true,
-                    cx,
-                ))
-            })
-            .when(self.main_apps.iter().any(|a| a == "hermes"), |this| {
-                this.child(self.nav_item(
-                    "nav-hermes",
-                    IconName::SquareTerminal,
-                    Some(rgb(0x4B5563).into()),
-                    "Hermes",
+                    "nav-ohmypi",
+                    CustomIcon::OhMyPi,
+                    Some(rgb(0xEC4899).into()),
+                    "Oh My Pi",
                     Route::Codex,
                     Some(if is_en { "Soon".to_string() } else { "即将支持".to_string() }),
                     true,
@@ -1021,7 +1117,7 @@ impl RouterApp {
             .when(self.main_apps.iter().any(|a| a == "pi"), |this| {
                 this.child(self.nav_item(
                     "nav-pi",
-                    IconName::Star,
+                    CustomIcon::Pi,
                     Some(rgb(0x3B82F6).into()),
                     "Pi",
                     Route::Codex,
@@ -1686,15 +1782,16 @@ impl RouterApp {
     fn render_settings_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_en = self.language == AppLanguage::En;
         let border = cx.theme().sidebar_border;
+        let accent = cx.theme().sidebar_accent;
         let query = self.settings_search_input.read(cx).value().to_string();
         let query = query.trim().to_lowercase();
 
         let general_matches = query.is_empty()
-            || "通用 general 界面 语言 简体中文 english language 外观 主题 浅色 深色 跟随系统 theme light dark system 主页面 显示 claude codex gemini grok opencode openclaw hermes pi 窗口行为 开机自启 startup 托盘 minimize tray"
+            || "通用 general 界面 语言 简体中文 english language 外观 主题 浅色 深色 跟随系统 theme light dark system 主页面 显示 claude codex gemini grok opencode openclaw hermes pi amp cursor deepseek fx kimi ohmypi 窗口行为 开机自启 startup 托盘 minimize tray"
                 .contains(&query);
 
         let usage_matches = query.is_empty()
-            || "用量 usage 统计 账单 消费 费用 成本 消耗 token tokens 日视图 月账单 项目 日期 范围 筛选 cost daily monthly projects window claude codex openai"
+            || "用量 usage 统计 账单 消费 费用 成本 消耗 token tokens 日视图 月账单 每日 每月 项目 日期 范围 筛选 cost daily monthly projects window claude codex openai"
                 .contains(&query);
 
         v_flex()
@@ -1705,12 +1802,21 @@ impl RouterApp {
             .pt(px(48.))
             .gap(px(6.))
             .child(
-                // Back button
-                Button::new("settings-back-btn")
-                    .ghost()
-                    .small()
-                    .icon(IconName::ChevronLeft)
-                    .label(if is_en { "Back" } else { "返回" })
+                // Waku style Back button
+                div()
+                    .id("settings-back")
+                    .h(px(34.))
+                    .px(px(9.))
+                    .rounded(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(9.))
+                    .cursor_pointer()
+                    .text_size(px(13.))
+                    .text_color(cx.theme().muted_foreground)
+                    .hover(move |element| element.bg(accent))
+                    .child(Icon::new(CustomIcon::ArrowLeft).size(px(15.)).text_color(cx.theme().muted_foreground))
+                    .child(if is_en { "Back" } else { "返回" })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.route = this.previous_route;
                         cx.notify();
@@ -1813,17 +1919,17 @@ impl RouterApp {
         div()
             .id(SharedString::from(format!("app-chip-{}", id)))
             .h(px(32.))
-            .px(px(10.))
+            .px(px(12.))
             .rounded(px(16.))
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(px(7.))
             .cursor_pointer()
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
             .when(is_active, |this| {
-                this.bg(theme.primary)
-                    .text_color(theme.primary_foreground)
+                this.bg(rgb(0x2563EB))
+                    .text_color(rgb(0xFFFFFF))
                     .shadow_xs()
             })
             .when(!is_active, |this| {
@@ -1836,7 +1942,7 @@ impl RouterApp {
             .child(
                 Icon::new(icon)
                     .size(px(14.))
-                    .text_color(if is_active { theme.primary_foreground } else { icon_color }),
+                    .text_color(if is_active { rgb(0xFFFFFF).into() } else { icon_color }),
             )
             .child(label)
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1855,7 +1961,7 @@ impl RouterApp {
         let theme_match = query.is_empty()
             || "外观主题 appearance theme 浅色 深色 跟随系统 light dark system 主题".contains(&query);
         let apps_match = query.is_empty()
-            || "主页面显示 main page apps claude codex gemini grok opencode openclaw hermes pi 侧边栏 导航".contains(&query);
+            || "主页面显示 main page apps claude codex gemini grok opencode openclaw hermes pi amp cursor deepseek fx kimi ohmypi 侧边栏 导航".contains(&query);
         let window_match = query.is_empty()
             || "窗口行为 window behavior 开机自启 startup 关闭时最小化到托盘 minimize tray 托盘".contains(&query);
 
@@ -2028,15 +2134,18 @@ impl RouterApp {
                                     .w_full()
                                     .flex_wrap()
                                     .gap(px(8.))
+                                    .child(self.render_app_toggle_chip("amp", "Amp", CustomIcon::Amp, rgb(0xEA580C).into(), cx))
                                     .child(self.render_app_toggle_chip("claude", "Claude Code", CustomIcon::Claude, rgb(0xD97757).into(), cx))
                                     .child(self.render_app_toggle_chip("claude-desktop", "Claude Desktop", CustomIcon::Claude, rgb(0xD97757).into(), cx))
-                                    .child(self.render_app_toggle_chip("codex", "Codex", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
-                                    .child(self.render_app_toggle_chip("gemini", "Gemini", IconName::Star, rgb(0x2563EB).into(), cx))
+                                    .child(self.render_app_toggle_chip("codex", "Codex CLI", CustomIcon::OpenAI, rgb(0x10A37F).into(), cx))
+                                    .child(self.render_app_toggle_chip("cursor", "Cursor CLI", CustomIcon::Cursor, rgb(0x6366F1).into(), cx))
+                                    .child(self.render_app_toggle_chip("deepseek", "DeepSeek Harness", CustomIcon::DeepSeek, rgb(0x3B82F6).into(), cx))
+                                    .child(self.render_app_toggle_chip("fx", "Fx", CustomIcon::Fx, rgb(0x4B5563).into(), cx))
+                                    .child(self.render_app_toggle_chip("opencode", "OpenCode", CustomIcon::OpenCode, rgb(0x0284C7).into(), cx))
                                     .child(self.render_app_toggle_chip("grok", "Grok Build", CustomIcon::Grok, rgb(0x8B5CF6).into(), cx))
-                                    .child(self.render_app_toggle_chip("opencode", "OpenCode", IconName::SquareTerminal, rgb(0x0284C7).into(), cx))
-                                    .child(self.render_app_toggle_chip("openclaw", "OpenClaw", IconName::Bot, rgb(0xDC2626).into(), cx))
-                                    .child(self.render_app_toggle_chip("hermes", "Hermes", IconName::SquareTerminal, rgb(0x4B5563).into(), cx))
-                                    .child(self.render_app_toggle_chip("pi", "Pi", IconName::Star, rgb(0x3B82F6).into(), cx)),
+                                    .child(self.render_app_toggle_chip("kimi", "Kimi Code", CustomIcon::Kimi, rgb(0x2563EB).into(), cx))
+                                    .child(self.render_app_toggle_chip("ohmypi", "Oh My Pi", CustomIcon::OhMyPi, rgb(0xEC4899).into(), cx))
+                                    .child(self.render_app_toggle_chip("pi", "Pi", CustomIcon::Pi, rgb(0x3B82F6).into(), cx)),
                             ),
                     ),
                 )
@@ -2427,7 +2536,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_view_mode == UsageViewMode::Daily)
-                                            .label(if is_en { "Daily" } else { "日视图" })
+                                            .label(if is_en { "Daily" } else { "每日" })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_view_mode = UsageViewMode::Daily;
                                                 cx.notify();
@@ -2438,7 +2547,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_view_mode == UsageViewMode::Monthly)
-                                            .label(if is_en { "Monthly" } else { "月账单" })
+                                            .label(if is_en { "Monthly" } else { "每月" })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_view_mode = UsageViewMode::Monthly;
                                                 cx.notify();
@@ -2449,70 +2558,38 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_view_mode == UsageViewMode::Projects)
-                                            .label(if is_en { "Projects" } else { "项目视图" })
+                                            .label(if is_en { "Projects" } else { "项目" })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_view_mode = UsageViewMode::Projects;
                                                 cx.notify();
                                             })),
                                     ),
                             )
-                            // Window Selector (when not Monthly)
+                            // Window Selector Dropdown (when not Monthly)
                             .when(self.usage_view_mode != UsageViewMode::Monthly, |this| {
                                 this.child(
-                                    h_flex()
-                                        .p(px(2.))
-                                        .rounded(px(8.))
-                                        .bg(theme.secondary.opacity(0.5))
-                                        .border_1()
-                                        .border_color(theme.border)
-                                        .gap(px(2.))
-                                        .child(
-                                            Button::new("win-7d")
-                                                .ghost()
-                                                .xsmall()
-                                                .selected(self.usage_window == UsageWindowChoice::Days7)
-                                                .label(if is_en { "7D" } else { "7天" })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.usage_window = UsageWindowChoice::Days7;
-                                                    cx.notify();
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("win-30d")
-                                                .ghost()
-                                                .xsmall()
-                                                .selected(self.usage_window == UsageWindowChoice::Days30)
-                                                .label(if is_en { "30D" } else { "30天" })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.usage_window = UsageWindowChoice::Days30;
-                                                    cx.notify();
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("win-90d")
-                                                .ghost()
-                                                .xsmall()
-                                                .selected(self.usage_window == UsageWindowChoice::Days90)
-                                                .label(if is_en { "90D" } else { "90天" })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.usage_window = UsageWindowChoice::Days90;
-                                                    cx.notify();
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("win-1y")
-                                                .ghost()
-                                                .xsmall()
-                                                .selected(self.usage_window == UsageWindowChoice::Year1)
-                                                .label(if is_en { "1Y" } else { "1年" })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.usage_window = UsageWindowChoice::Year1;
-                                                    cx.notify();
-                                                })),
-                                        ),
+                                    div()
+                                        .w(px(130.))
+                                        .child(Select::new(&self.usage_window_select).small())
                                 )
                             })
-                            // Metric Switcher ($ / Token)
+                            // Refresh
+                            .child(
+                                Button::new("usage-refresh-btn")
+                                    .outline()
+                                    .small()
+                                    .icon(CustomIcon::RotateCw)
+                                    .tooltip(if is_en { "Refresh usage stats" } else { "刷新用量统计" })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        let msg = if this.language == AppLanguage::En {
+                                            "Usage stats refreshed"
+                                        } else {
+                                            "用量数据已刷新"
+                                        };
+                                        notify_success(msg, window, cx);
+                                    })),
+                            )
+                            // Metric Switcher (Cost / Tokens)
                             .child(
                                 h_flex()
                                     .p(px(2.))
@@ -2526,7 +2603,7 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_metric == UsageMetric::Cost)
-                                            .label(if is_en { "Cost ($)" } else { "费用 ($)" })
+                                            .label(if is_en { "Cost" } else { "费用" })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_metric = UsageMetric::Cost;
                                                 cx.notify();
@@ -2537,28 +2614,12 @@ impl RouterApp {
                                             .ghost()
                                             .xsmall()
                                             .selected(self.usage_metric == UsageMetric::Tokens)
-                                            .label("Tokens")
+                                            .label(if is_en { "Tokens" } else { "令牌" })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.usage_metric = UsageMetric::Tokens;
                                                 cx.notify();
                                             })),
                                     ),
-                            )
-                            // Refresh
-                            .child(
-                                Button::new("usage-refresh-btn")
-                                    .outline()
-                                    .small()
-                                    .icon(IconName::Redo2)
-                                    .tooltip(if is_en { "Refresh usage stats" } else { "刷新用量统计" })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        let msg = if this.language == AppLanguage::En {
-                                            "Usage stats refreshed"
-                                        } else {
-                                            "用量数据已刷新"
-                                        };
-                                        notify_success(msg, window, cx);
-                                    })),
                             ),
                     ),
             )
