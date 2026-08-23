@@ -25,7 +25,7 @@ use store::ThemePreference;
 
 use crate::theme::{self, StatusColors};
 
-pub const CHROME_HEIGHT: f32 = 40.;
+pub const CHROME_HEIGHT: f32 = 44.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -421,12 +421,17 @@ impl RouterApp {
             .rounded(px(8.))
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(px(10.))
             .text_size(px(14.))
             .text_color(if disabled { fg.opacity(0.4) } else { fg })
             .when(active, |this| this.bg(accent).font_weight(FontWeight::SEMIBOLD))
             .when(!disabled, |this| this.hover(|this| this.bg(accent)))
-            .child(Icon::new(icon).size(px(16.)).flex_shrink_0())
+            .child(
+                Icon::new(icon)
+                    .size(px(18.))
+                    .flex_shrink_0()
+                    .text_color(if active { cx.theme().foreground } else { fg.opacity(0.85) }),
+            )
             .child(div().flex_1().truncate().child(label))
             .when_some(badge, |this, b| {
                 this.child(
@@ -454,8 +459,8 @@ impl RouterApp {
             .h_full()
             .flex_shrink_0()
             .p(px(8.))
-            // Clear traffic lights on macOS
-            .pt(px(53.))
+            // Clear traffic lights and chrome bar
+            .pt(px(48.))
             .gap(px(4.))
             .child(self.nav_item(
                 "nav-dashboard",
@@ -542,16 +547,11 @@ impl RouterApp {
     }
 
     fn render_chrome(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let left_pad = if cfg!(target_os = "macos") { 93. } else { 12. };
-        let sidebar_icon = if self.sidebar_open {
-            IconName::PanelLeftClose
-        } else {
-            IconName::PanelLeftOpen
-        };
+        let left_pad = if cfg!(target_os = "macos") { 78. } else { 12. };
         let sidebar_tooltip = if self.sidebar_open {
-            "收起侧边栏"
+            "隐藏侧边栏"
         } else {
-            "展开侧边栏"
+            "显示侧边栏"
         };
 
         h_flex()
@@ -560,7 +560,7 @@ impl RouterApp {
             .left_0()
             .right_0()
             .h(px(CHROME_HEIGHT))
-            .items_end()
+            .items_center()
             .child(
                 div()
                     .w(px(left_pad))
@@ -570,11 +570,10 @@ impl RouterApp {
             .child(
                 h_flex()
                     .items_center()
-                    .gap(px(6.))
-                    .pb(px(4.))
+                    .gap(px(4.))
                     .child(self.chrome_button(
                         "chrome-sidebar",
-                        sidebar_icon,
+                        IconName::PanelLeft,
                         sidebar_tooltip,
                         cx,
                         |this, _, cx| {

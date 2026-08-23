@@ -10,10 +10,12 @@ use gpui_component::Root;
 use crate::app_view::RouterApp;
 
 pub fn run() {
-    Application::new().run(|cx: &mut App| {
-        gpui_component::init(cx);
-        theme::apply_palette(cx);
-        cx.activate(true);
+    Application::new()
+        .with_assets(gpui_component_assets::Assets)
+        .run(|cx: &mut App| {
+            gpui_component::init(cx);
+            theme::apply_palette(cx);
+            cx.activate(true);
 
         let window_size = size(px(960.), px(680.));
         let bounds = Bounds::centered(None, window_size, cx);
