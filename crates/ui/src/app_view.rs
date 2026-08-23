@@ -626,11 +626,11 @@ impl RouterApp {
         crate::theme::apply_theme(settings.theme, Some(window), cx);
 
         let search_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("搜索供应商、模型或端点...")
+            InputState::new(window, cx).placeholder(t!("provider.search_placeholder").to_string())
         });
 
         let settings_search_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("搜索设置...")
+            InputState::new(window, cx).placeholder(t!("settings.search_placeholder").to_string())
         });
 
         let window_items = vec![
@@ -759,10 +759,40 @@ impl RouterApp {
 
     fn set_language(&mut self, language: AppLanguage, window: &mut Window, cx: &mut Context<Self>) {
         self.language = language;
+        rust_i18n::set_locale(language.locale_str());
         if let Err(err) = self.workspace.set_language(language) {
             self.fail(err, window, cx);
             return;
         }
+
+        let window_items = vec![
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Days7,
+                label: t!("usage.days_7").to_string(),
+            },
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Days30,
+                label: t!("usage.days_30").to_string(),
+            },
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Days90,
+                label: t!("usage.days_90").to_string(),
+            },
+            UsageWindowSelectItem {
+                choice: UsageWindowChoice::Year1,
+                label: t!("usage.year_1").to_string(),
+            },
+        ];
+        self.usage_window_select.update(cx, |this, cx| {
+            this.set_items(window_items, window, cx);
+        });
+        self.search_input.update(cx, |this, cx| {
+            this.set_placeholder(t!("provider.search_placeholder").to_string(), window, cx);
+        });
+        self.settings_search_input.update(cx, |this, cx| {
+            this.set_placeholder(t!("settings.search_placeholder").to_string(), window, cx);
+        });
+
         let msg = match language {
             AppLanguage::ZhCn => "已切换界面语言为简体中文",
             AppLanguage::En => "Interface language set to English",

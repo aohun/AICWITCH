@@ -43,3 +43,19 @@ pub fn run() {
             .expect("failed to open window");
         });
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_i18n_locales() {
+        println!("Available locales: {:?}", rust_i18n::available_locales!());
+        rust_i18n::set_locale("zh-CN");
+        println!("Current locale: {}", &*rust_i18n::locale());
+        println!("general.theme_light in zh-CN: {}", rust_i18n::t!("general.theme_light"));
+        println!("settings.general in zh-CN: {}", rust_i18n::t!("settings.general"));
+        rust_i18n::set_locale("en");
+        println!("Current locale: {}", &*rust_i18n::locale());
+        println!("general.theme_light in en: {}", rust_i18n::t!("general.theme_light"));
+        println!("settings.general in en: {}", rust_i18n::t!("settings.general"));
+    }
+}
