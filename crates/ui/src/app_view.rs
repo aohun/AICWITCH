@@ -1803,7 +1803,7 @@ impl RouterApp {
             .child(
                 h_flex()
                     .w_full()
-                    .items_start()
+                    .items_center()
                     .justify_between()
                     .gap(px(12.))
                     .child(
@@ -1917,7 +1917,7 @@ impl RouterApp {
                             .gap(px(6.))
                             .child(
                                 Button::new(SharedString::from(format!("enable-{}", provider.id)))
-                                    .primary()
+                                    .outline()
                                     .small()
                                     .icon(if is_current {
                                         IconName::Check
@@ -1946,7 +1946,7 @@ impl RouterApp {
                             )
                             .child(
                                 Button::new(SharedString::from(format!("copy-{}", provider.id)))
-                                    .ghost()
+                                    .outline()
                                     .small()
                                     .icon(IconName::Copy)
                                     .tooltip("复制供应商")
@@ -1957,7 +1957,7 @@ impl RouterApp {
                             )
                             .child(
                                 Button::new(SharedString::from(format!("delete-{}", provider.id)))
-                                    .ghost()
+                                    .outline()
                                     .small()
                                     .icon(IconName::Delete)
                                     .tooltip("删除供应商")
